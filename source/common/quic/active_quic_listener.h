@@ -42,6 +42,7 @@ public:
                      QuicConnectionIdGeneratorPtr&& cid_generator,
                      QuicConnectionIdWorkerSelector worker_selector,
                      EnvoyQuicConnectionDebugVisitorFactoryInterfaceOptRef debug_visitor_factory,
+                     QuicConnectionIdObserverPtr connection_id_observer,
                      bool reject_new_connections = false, bool enable_session_idle_list = false);
 
   ~ActiveQuicListener() override;
@@ -144,7 +145,8 @@ protected:
       uint32_t packets_to_read_to_connection_count_ratio,
       EnvoyQuicCryptoServerStreamFactoryInterface& crypto_server_stream_factory,
       EnvoyQuicProofSourceFactoryInterface& proof_source_factory,
-      QuicConnectionIdGeneratorPtr&& cid_generator);
+      QuicConnectionIdGeneratorPtr&& cid_generator,
+      QuicConnectionIdObserverPtr connection_id_observer);
 
 private:
   friend class ActiveQuicListenerFactoryPeer;

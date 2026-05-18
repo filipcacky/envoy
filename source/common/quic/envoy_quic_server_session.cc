@@ -131,6 +131,11 @@ void EnvoyQuicServerSession::setUpRequestDecoder(EnvoyQuicServerStream& stream) 
 
 void EnvoyQuicServerSession::OnConnectionClosed(const quic::QuicConnectionCloseFrame& frame,
                                                 quic::ConnectionCloseSource source) {
+  if (quic_connection_->connectionIdObserver()) {
+    for (const auto& cid : connection()->GetActiveServerConnectionIds()) {
+      quic_connection_->connectionIdObserver()->onConnectionIdRetired(cid);
+    }
+  }
   quic::QuicServerSessionBase::OnConnectionClosed(frame, source);
   MaybeRemoveSessionFromIdleList();
   if (source == quic::ConnectionCloseSource::FROM_SELF) {
@@ -339,6 +344,23 @@ void EnvoyQuicServerSession::MaybeRemoveSessionFromIdleList() {
   }
   is_in_idle_list_ = false;
   session_idle_list_->RemoveSession(*this);
+}
+
+void EnvoyQuicServerSession::SendNewConnectionId(
+    const quic::QuicNewConnectionIdFrame& frame) {
+  quic::QuicServerSessionBase::SendNewConnectionId(frame);
+  if (quic_connection_->connectionIdObserver() && quic_connection_->connectionIdObserverSocket()) {
+    quic_connection_->connectionIdObserver()->onConnectionIdIssued(
+        frame.connection_id, *quic_connection_->connectionIdObserverSocket());
+  }
+}
+
+void EnvoyQuicServerSession::OnServerConnectionIdRetired(
+    const quic::QuicConnectionId& server_connection_id) {
+  quic::QuicServerSessionBase::OnServerConnectionIdRetired(server_connection_id);
+  if (quic_connection_->connectionIdObserver()) {
+    quic_connection_->connectionIdObserver()->onConnectionIdRetired(server_connection_id);
+  }
 }
 
 } // namespace Quic

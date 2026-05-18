@@ -60,7 +60,8 @@ EnvoyQuicDispatcher::EnvoyQuicDispatcher(
     EnvoyQuicCryptoServerStreamFactoryInterface& crypto_server_stream_factory,
     quic::ConnectionIdGeneratorInterface& generator,
     EnvoyQuicConnectionDebugVisitorFactoryInterfaceOptRef debug_visitor_factory,
-    std::unique_ptr<Http::SessionIdleList> session_idle_list)
+    std::unique_ptr<Http::SessionIdleList> session_idle_list,
+    QuicConnectionIdObserverPtr connection_id_observer)
     : quic::QuicDispatcher(&quic_config, crypto_config, version_manager, std::move(helper),
                            std::make_unique<EnvoyQuicCryptoServerStreamHelper>(),
                            std::move(alarm_factory), expected_server_connection_id_length,
@@ -73,7 +74,8 @@ EnvoyQuicDispatcher::EnvoyQuicDispatcher(
       connection_stats_({QUIC_CONNECTION_STATS(
           POOL_COUNTER_PREFIX(listener_config.listenerScope(), "quic.connection"))}),
       debug_visitor_factory_(debug_visitor_factory),
-      session_idle_list_(std::move(session_idle_list)) {}
+      session_idle_list_(std::move(session_idle_list)),
+      connection_id_observer_(std::move(connection_id_observer)) {}
 
 void EnvoyQuicDispatcher::OnConnectionClosed(quic::QuicConnectionId connection_id,
                                              quic::QuicErrorCode error,
@@ -135,6 +137,12 @@ std::unique_ptr<quic::QuicSession> EnvoyQuicDispatcher::CreateQuicSession(
       server_connection_id, self_address, peer_address, *helper(), *alarm_factory(), writer(),
       quic::ParsedQuicVersionVector{version}, std::move(connection_socket), connection_id_generator,
       std::move(listener_filter_manager));
+  // Set CID observer on the connection. The connection's ProcessUdpPacket override registers
+  // the original client DCID on first packet (SetOriginalDestinationConnectionId is called
+  // after CreateQuicSession returns).
+  if (connection_id_observer_) {
+    quic_connection->setConnectionIdObserver(connection_id_observer_.get(), listen_socket_);
+  }
 
   auto quic_session = std::make_unique<EnvoyQuicServerSession>(
       quic_config, quic::ParsedQuicVersionVector{version}, std::move(quic_connection), this,
@@ -157,6 +165,9 @@ std::unique_ptr<quic::QuicSession> EnvoyQuicDispatcher::CreateQuicSession(
     quic_session->close(Network::ConnectionCloseType::FlushWrite, "no filter chain found");
   }
   quic_session->Initialize();
+  if (connection_id_observer_) {
+    connection_id_observer_->onConnectionIdIssued(server_connection_id, listen_socket_);
+  }
   connection_handler_.incNumConnections();
   listener_stats_.downstream_cx_active_.inc();
   listener_stats_.downstream_cx_total_.inc();

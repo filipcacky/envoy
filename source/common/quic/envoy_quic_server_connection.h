@@ -3,6 +3,7 @@
 #include "envoy/network/listener.h"
 
 #include "source/common/network/generic_listener_filter_impl_base.h"
+#include "source/common/quic/envoy_quic_connection_id_generator_factory.h"
 #include "source/common/quic/envoy_quic_utils.h"
 #include "source/common/quic/quic_network_connection.h"
 
@@ -155,6 +156,15 @@ public:
 
   bool actuallyDeferSend() const { return defer_send_in_response_to_packets(); }
 
+  void setConnectionIdObserver(QuicConnectionIdObserver* observer,
+                               const Network::Socket& socket) {
+    connection_id_observer_ = observer;
+    connection_id_observer_socket_ = &socket;
+  }
+
+  QuicConnectionIdObserver* connectionIdObserver() const { return connection_id_observer_; }
+  const Network::Socket* connectionIdObserverSocket() const { return connection_id_observer_socket_; }
+
 protected:
   void OnEffectivePeerMigrationValidated(bool is_migration_linkable) override;
 
@@ -163,6 +173,8 @@ private:
   // NOLINTNEXTLINE(readability-identifier-naming)
   void OnWritePacketDone(size_t packet_size, const quic::WriteResult& result);
   std::unique_ptr<QuicListenerFilterManagerImpl> listener_filter_manager_;
+  QuicConnectionIdObserver* connection_id_observer_{nullptr};
+  const Network::Socket* connection_id_observer_socket_{nullptr};
   bool first_packet_received_ = false;
 };
 

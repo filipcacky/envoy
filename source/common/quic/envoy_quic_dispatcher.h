@@ -6,6 +6,7 @@
 
 #include "source/common/http/session_idle_list.h"
 #include "source/common/quic/envoy_quic_connection_debug_visitor_factory_interface.h"
+#include "source/common/quic/envoy_quic_connection_id_generator_factory.h"
 #include "source/common/quic/envoy_quic_server_crypto_stream_factory.h"
 #include "source/common/quic/envoy_quic_server_session.h"
 #include "source/common/quic/quic_stat_names.h"
@@ -68,7 +69,8 @@ public:
       EnvoyQuicCryptoServerStreamFactoryInterface& crypto_server_stream_factory,
       quic::ConnectionIdGeneratorInterface& generator,
       EnvoyQuicConnectionDebugVisitorFactoryInterfaceOptRef debug_visitor_factory,
-      std::unique_ptr<Http::SessionIdleList> session_idle_list);
+      std::unique_ptr<Http::SessionIdleList> session_idle_list,
+      QuicConnectionIdObserverPtr connection_id_observer);
 
   // quic::QuicDispatcher
   void OnConnectionClosed(quic::QuicConnectionId connection_id, quic::QuicErrorCode error,
@@ -123,6 +125,7 @@ private:
   // doing any work. Session is added to this list when it has no active
   // streams, and it is removed from this list when a new stream is created.
   std::unique_ptr<Http::SessionIdleListInterface> session_idle_list_;
+  QuicConnectionIdObserverPtr connection_id_observer_;
 };
 
 } // namespace Quic

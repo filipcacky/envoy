@@ -303,6 +303,7 @@ envoy_cc_library(
     ]),
     deps = envoy_select_enable_http3([
         ":envoy_quic_connection_debug_visitor_factory_interface",
+        ":envoy_quic_connection_id_generator_factory_interface",
         ":envoy_quic_proof_source_lib",
         ":envoy_quic_server_connection_lib",
         ":envoy_quic_server_crypto_stream_factory_lib",
@@ -405,6 +406,7 @@ envoy_cc_library(
     srcs = envoy_select_enable_http3(["envoy_quic_server_connection.cc"]),
     hdrs = envoy_select_enable_http3(["envoy_quic_server_connection.h"]),
     deps = envoy_select_enable_http3([
+        ":envoy_quic_connection_id_generator_factory_interface",
         ":quic_io_handle_wrapper_lib",
         ":quic_network_connection_lib",
         "//source/common/network:generic_listener_filter_impl_base_lib",
@@ -469,6 +471,7 @@ envoy_cc_library(
     hdrs = envoy_select_enable_http3(["envoy_quic_dispatcher.h"]),
     deps = envoy_select_enable_http3([
         ":envoy_quic_connection_debug_visitor_factory_interface",
+        ":envoy_quic_connection_id_generator_factory_interface",
         ":envoy_quic_proof_source_lib",
         ":envoy_quic_server_connection_lib",
         ":envoy_quic_server_crypto_stream_factory_lib",

@@ -16,6 +16,18 @@ using QuicConnectionIdGeneratorPtr = std::unique_ptr<quic::ConnectionIdGenerator
 using QuicConnectionIdWorkerSelector =
     std::function<uint32_t(const Buffer::Instance& packet, uint32_t default_value)>;
 
+class QuicConnectionIdObserver {
+public:
+  virtual ~QuicConnectionIdObserver() = default;
+
+  virtual void onConnectionIdIssued(const quic::QuicConnectionId& connection_id,
+                                    const Network::Socket& socket) PURE;
+
+  virtual void onConnectionIdRetired(const quic::QuicConnectionId& connection_id) PURE;
+};
+
+using QuicConnectionIdObserverPtr = std::unique_ptr<QuicConnectionIdObserver>;
+
 /**
  * A factory interface to provide QUIC connection IDs and compatible BPF code for stable packet
  * routing.
@@ -50,6 +62,8 @@ public:
     UNREFERENCED_PARAMETER(worker_index);
     UNREFERENCED_PARAMETER(socket);
   }
+
+  virtual QuicConnectionIdObserverPtr createConnectionIdObserver() { return nullptr; }
 };
 
 using EnvoyQuicConnectionIdGeneratorFactoryPtr =
