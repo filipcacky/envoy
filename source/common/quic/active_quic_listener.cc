@@ -437,6 +437,8 @@ Network::ConnectionHandler::ActiveUdpListenerPtr ActiveQuicListenerFactory::crea
     }
   }
 
+  quic_cid_generator_factory_->registerWorkerSocket(worker_index, *listen_socket_ptr);
+
   return createActiveQuicListener(
       runtime, worker_index, concurrency_, dispatcher, parent, std::move(listen_socket_ptr), config,
       quic_config_, kernel_worker_routing_, enabled_, quic_stat_names_,

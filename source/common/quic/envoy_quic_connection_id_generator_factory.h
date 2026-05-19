@@ -45,6 +45,11 @@ public:
    */
   virtual QuicConnectionIdWorkerSelector
   getCompatibleConnectionIdWorkerSelector(uint32_t concurrency) PURE;
+
+  virtual void registerWorkerSocket(uint32_t worker_index, const Network::Socket& socket) {
+    UNREFERENCED_PARAMETER(worker_index);
+    UNREFERENCED_PARAMETER(socket);
+  }
 };
 
 using EnvoyQuicConnectionIdGeneratorFactoryPtr =
