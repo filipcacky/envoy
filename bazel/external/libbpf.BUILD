@@ -4,6 +4,7 @@ load("@rules_foreign_cc//foreign_cc:make.bzl", "make")
 filegroup(
     name = "all",
     srcs = glob(["**"]),
+    visibility = ["//visibility:public"],
 )
 
 make(
