@@ -102,6 +102,18 @@ REPOSITORY_LOCATIONS_SPEC = dict(
         strip_prefix = "aws-c-auth-{version}",
         urls = ["https://github.com/awslabs/aws-c-auth/archive/refs/tags/v{version}.tar.gz"],
     ),
+    elfutils = dict(
+        version = "0.192",
+        sha256 = "616099beae24aba11f9b63d86ca6cc8d566d968b802391334c91df54eab416b4",
+        strip_prefix = "elfutils-{version}",
+        urls = ["https://sourceware.org/elfutils/ftp/{version}/elfutils-{version}.tar.bz2"],
+    ),
+    libbpf = dict(
+        version = "1.7.0",
+        sha256 = "7ab5feffbf78557f626f2e3e3204788528394494715a30fc2070fcddc2051b7b",
+        strip_prefix = "libbpf-{version}",
+        urls = ["https://github.com/libbpf/libbpf/archive/v{version}.tar.gz"],
+    ),
     liburing = dict(
         version = "2.14",
         sha256 = "5f80964108981c6ad979c735f0b4877d5f49914c2a062f8e88282f26bf61de0c",

@@ -168,6 +168,8 @@ def envoy_dependencies(skip_targets = []):
     _openssl()
 
     _aws_c_auth_testdata()
+    _elfutils()
+    _libbpf()
     _liburing()
     _com_github_bazel_buildtools()
     _c_ares()
@@ -350,6 +352,19 @@ def _aws_c_auth_testdata():
         name = "aws-c-auth-testdata",
         location_name = "aws_c_auth_testdata",
         build_file = "@envoy//bazel/external:aws-c-auth.BUILD",
+    )
+
+def _elfutils():
+    external_http_archive(
+        name = "elfutils",
+        build_file = "@envoy//bazel/external:elfutils.BUILD",
+        patches = ["@envoy//bazel/external:elfutils.patch"],
+    )
+
+def _libbpf():
+    external_http_archive(
+        name = "libbpf",
+        build_file = "@envoy//bazel/external:libbpf.BUILD",
     )
 
 def _liburing():

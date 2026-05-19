@@ -1,0 +1,20 @@
+diff --git lib/dynamicsizehash_concurrent.c lib/dynamicsizehash_concurrent.c
+index 2ea545e0..50deb1f3 100644
+--- lib/dynamicsizehash_concurrent.c
++++ lib/dynamicsizehash_concurrent.c
+@@ -32,6 +32,9 @@
+ #include <system.h>
+ #include <pthread.h>
+
++#pragma clang diagnostic push
++#pragma clang diagnostic ignored "-Wxor-used-as-pow"
++
+ /* Before including this file the following macros must be defined:
+
+    NAME      name of the hash table structure.
+@@ -494,3 +497,5 @@ FIND(NAME) (NAME *htab, HASHTYPE hval)
+   pthread_rwlock_unlock(&htab->resize_rwl);
+   return ret_val;
+ }
++
++#pragma clang diagnostic pop
