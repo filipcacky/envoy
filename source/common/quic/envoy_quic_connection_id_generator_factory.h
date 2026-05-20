@@ -48,7 +48,7 @@ public:
    * socket. Linux only.
    * @param concurrency the total number of worker threads.
    */
-  virtual Network::Socket::OptionConstSharedPtr
+  virtual absl::StatusOr<Network::Socket::OptionConstSharedPtr>
   createCompatibleLinuxBpfSocketOption(uint32_t concurrency) PURE;
 
   /**

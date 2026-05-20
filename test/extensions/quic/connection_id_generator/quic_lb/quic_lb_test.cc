@@ -54,8 +54,9 @@ encryptionParamaters(uint8_t version_int = 0, std::string key_str = "0123456789a
 class KernelBpfTester {
 public:
   KernelBpfTester(uint32_t concurrency, EnvoyQuicConnectionIdGeneratorFactory& factory) {
-    auto bpf_socket_option = factory.createCompatibleLinuxBpfSocketOption(concurrency);
-    if (bpf_socket_option == nullptr) {
+    auto opt_or_error = factory.createCompatibleLinuxBpfSocketOption(concurrency);
+    ASSERT_OK(opt_or_error);
+    if (opt_or_error.value() == nullptr) {
       ENVOY_LOG_MISC(error, "Cannot test BPF filter on this OS/kernel");
       non_default_host_ = (concurrency / 2);
       return;
@@ -66,7 +67,7 @@ public:
     // Create the first socket on an unused address.
     std::tie(address_, sockets_[0]) = Network::Test::bindFreeLoopbackPort(
         Network::Address::IpVersion::v4, Network::Socket::Type::Datagram, true);
-    sockets_[0]->addOption(bpf_socket_option);
+    sockets_[0]->addOption(opt_or_error.value());
     Network::Socket::applyOptions(sockets_[0]->options(), *sockets_[0],
                                   envoy::config::core::v3::SocketOption::STATE_BOUND);
 

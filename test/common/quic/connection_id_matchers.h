@@ -40,8 +40,8 @@ public:
   FactoryFunctions(EnvoyQuicConnectionIdGeneratorFactory& factory, uint32_t concurrency)
       : worker_selector_(factory.getCompatibleConnectionIdWorkerSelector(concurrency)) {
 #ifdef SUPPORTS_TESTING_BPF_PROG
-    Network::Socket::OptionConstSharedPtr sockopt =
-        factory.createCompatibleLinuxBpfSocketOption(concurrency);
+    auto opt_or_error = factory.createCompatibleLinuxBpfSocketOption(concurrency);
+    ASSERT_OK(op_or_error);
     // Using a mock socket to capture the socket option which otherwise cannot be
     // extracted from the private field in the Socket::Option.
     Network::MockListenSocket mock_socket;
@@ -51,7 +51,8 @@ public:
           bpf_prog_ = static_cast<const sock_fprog*>(optval);
           return Api::SysCallIntResult{0, 0};
         });
-    sockopt->setOption(mock_socket, envoy::config::core::v3::SocketOption::STATE_BOUND);
+    opt_or_error.value()->setOption(mock_socket,
+                                    envoy::config::core::v3::SocketOption::STATE_BOUND);
 #endif
   }
   const QuicConnectionIdWorkerSelector worker_selector_;
