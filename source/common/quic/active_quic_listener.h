@@ -130,6 +130,10 @@ public:
                           Event::Dispatcher& dispatcher, Network::ListenerConfig& config) override;
   bool isTransportConnectionless() const override { return false; }
   const Network::Socket::OptionsSharedPtr& socketOptions() const override { return options_; }
+  bool hasStatefulConnectionIdWorkerSelector() const override {
+    return kernel_worker_routing_ && quic_cid_generator_factory_ &&
+           quic_cid_generator_factory_->hasStatefulConnectionIdWorkerSelector();
+  }
 
   static void setDisableKernelBpfPacketRoutingForTest(bool val) {
     disable_kernel_bpf_packet_routing_for_test_ = val;

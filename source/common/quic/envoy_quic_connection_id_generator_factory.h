@@ -64,6 +64,7 @@ public:
   }
 
   virtual QuicConnectionIdObserverPtr createConnectionIdObserver() { return nullptr; }
+  virtual bool hasStatefulConnectionIdWorkerSelector() const { return false; }
 };
 
 using EnvoyQuicConnectionIdGeneratorFactoryPtr =

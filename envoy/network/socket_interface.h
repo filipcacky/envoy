@@ -23,9 +23,12 @@ struct SocketCreationOptions {
   // Is only valid for datagram sockets.
   size_t max_addresses_cache_size_{0};
 
+  bool skip_hot_restart_socket_inheritance_{false};
+
   bool operator==(const SocketCreationOptions& rhs) const {
     return mptcp_enabled_ == rhs.mptcp_enabled_ &&
-           max_addresses_cache_size_ == rhs.max_addresses_cache_size_;
+           max_addresses_cache_size_ == rhs.max_addresses_cache_size_ &&
+           skip_hot_restart_socket_inheritance_ == rhs.skip_hot_restart_socket_inheritance_;
   }
 };
 

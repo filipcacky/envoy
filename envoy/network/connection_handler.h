@@ -295,6 +295,8 @@ public:
    * @return socket options specific to this factory that should be applied to all sockets.
    */
   virtual const Network::Socket::OptionsSharedPtr& socketOptions() const PURE;
+
+  virtual bool hasStatefulConnectionIdWorkerSelector() const { return false; }
 };
 
 using ActiveUdpListenerFactoryPtr = std::unique_ptr<ActiveUdpListenerFactory>;
