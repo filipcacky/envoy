@@ -49,7 +49,8 @@ public:
 
   QuicConnectionIdGeneratorPtr createQuicConnectionIdGenerator(uint32_t worker_index) override;
   absl::StatusOr<Network::Socket::OptionConstSharedPtr>
-  createCompatibleLinuxBpfSocketOption(uint32_t concurrency) override;
+  createCompatibleLinuxBpfSocketOption(uint32_t concurrency,
+                                       const Network::Address::Instance& address) override;
   QuicConnectionIdWorkerSelector
   getCompatibleConnectionIdWorkerSelector(uint32_t concurrency) override;
   QuicConnectionIdObserverPtr createConnectionIdObserver() override;
@@ -59,8 +60,10 @@ public:
 private:
   Factory(const EpochStableConfig& config);
 
-  absl::Status loadPinnedMaps();
-  absl::Status pinProgram();
+  std::string makePinPath(const Network::Address::Instance& address);
+
+  absl::Status loadPinnedMaps(const Network::Address::Instance& address);
+  absl::Status pinProgram(const Network::Address::Instance& address);
   absl::Status loadBpfProgram();
   absl::Status cleanupAndError(absl::string_view message);
 

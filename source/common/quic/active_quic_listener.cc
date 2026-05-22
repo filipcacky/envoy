@@ -400,7 +400,7 @@ ActiveQuicListenerFactory::doFinalPreWorkerInit(Network::ListenSocketFactory& so
   if (!disable_kernel_bpf_packet_routing_for_test_) {
     if (concurrency_ > 1) {
       auto opt_or_error = state.cid_generator_factory_->createCompatibleLinuxBpfSocketOption(
-          concurrency_);
+          concurrency_, *socket_factory.localAddress());
       switch (opt_or_error.status().code()) {
       case absl::StatusCode::kOk:
         if (opt_or_error.value() != nullptr) {

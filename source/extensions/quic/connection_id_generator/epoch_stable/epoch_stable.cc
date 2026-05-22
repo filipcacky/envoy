@@ -88,9 +88,13 @@ absl::StatusOr<std::unique_ptr<Factory>> Factory::create(const EpochStableConfig
   return std::unique_ptr<Factory>(new Factory(config));
 }
 
-absl::Status Factory::loadPinnedMaps() {
+std::string Factory::makePinPath(const Network::Address::Instance& address) {
+  return absl::StrCat(config_.bpf_pin_path, "_", absl::HashOf(address.asStringView()));
+}
+
+absl::Status Factory::loadPinnedMaps(const Network::Address::Instance& address) {
 #if defined(__linux__)
-  int prog_fd = bpf_obj_get(config_.bpf_pin_path.c_str());
+  int prog_fd = bpf_obj_get(makePinPath(address).c_str());
   if (prog_fd < 0) {
     return absl::NotFoundError(
         fmt::format("no pinned program at '{}': {}", config_.bpf_pin_path, errorDetails(errno)));
@@ -152,17 +156,19 @@ absl::Status Factory::loadPinnedMaps() {
 
   return absl::OkStatus();
 #else
+  UNREFERENCED_PARAMETER(address);
   return absl::UnimplementedError(
       "envoy.quic.epoch_stable_routing_connection_id_generator not available");
 #endif
 }
 
-absl::Status Factory::pinProgram() {
+absl::Status Factory::pinProgram(const Network::Address::Instance& address) {
 #if defined(__linux__)
-  if (bpf_obj_pin(prog_fd_, config_.bpf_pin_path.c_str()) < 0) {
+  if (bpf_obj_pin(prog_fd_, makePinPath(address).c_str()) < 0) {
     return absl::InternalError(fmt::format("bpf_obj_pin failed: {}", errorDetails(errno)));
   }
 #endif
+  UNREFERENCED_PARAMETER(address);
   return absl::OkStatus();
 }
 
@@ -172,11 +178,12 @@ QuicConnectionIdGeneratorPtr Factory::createQuicConnectionIdGenerator(uint32_t) 
 }
 
 absl::StatusOr<Network::Socket::OptionConstSharedPtr>
-Factory::createCompatibleLinuxBpfSocketOption(uint32_t concurrency) {
+Factory::createCompatibleLinuxBpfSocketOption(uint32_t concurrency,
+                                              const Network::Address::Instance& address) {
 #if defined(SO_ATTACH_REUSEPORT_EBPF) && defined(__linux__)
   concurrency_ = concurrency;
 
-  const auto pinned = loadPinnedMaps();
+  const auto pinned = loadPinnedMaps(address);
   if (pinned.ok()) {
     return nullptr;
   }
@@ -185,7 +192,7 @@ Factory::createCompatibleLinuxBpfSocketOption(uint32_t concurrency) {
   }
 
   RETURN_IF_NOT_OK(loadBpfProgram());
-  RETURN_IF_NOT_OK(pinProgram());
+  RETURN_IF_NOT_OK(pinProgram(address));
 
   ENVOY_LOG_MISC(info, "epoch_stable: prog_fd={} socket_map_fd={} concurrency_fd={}", prog_fd_,
                  socket_map_fd_, concurrency_fd_);
@@ -193,6 +200,7 @@ Factory::createCompatibleLinuxBpfSocketOption(uint32_t concurrency) {
   return std::make_shared<Network::SocketOptionImpl>(
       envoy::config::core::v3::SocketOption::STATE_BOUND, ENVOY_ATTACH_REUSEPORT_EBPF, prog_fd_);
 #else
+  UNREFERENCED_PARAMETER(address);
   UNREFERENCED_PARAMETER(concurrency);
   return absl::UnimplementedError(
       "envoy.quic.epoch_stable_routing_connection_id_generator not available");
