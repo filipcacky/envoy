@@ -81,6 +81,8 @@ public:
   createQuicConnectionIdGeneratorFactory(const Protobuf::Message& config,
                                          ProtobufMessage::ValidationVisitor& validation_visitor,
                                          Server::Configuration::FactoryContext& context) PURE;
+
+  virtual bool hasStatefulConnectionIdWorkerSelector() const { return false; }
 };
 
 } // namespace Quic

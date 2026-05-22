@@ -131,9 +131,10 @@ public:
   bool isTransportConnectionless() const override { return false; }
   const Network::Socket::OptionsSharedPtr& socketOptions() const override { return options_; }
   bool hasStatefulConnectionIdWorkerSelector() const override {
-    return kernel_worker_routing_ && quic_cid_generator_factory_ &&
-           quic_cid_generator_factory_->hasStatefulConnectionIdWorkerSelector();
+    return cid_generator_config_factory_ &&
+           cid_generator_config_factory_->hasStatefulConnectionIdWorkerSelector();
   }
+  absl::Status doFinalPreWorkerInit(Network::ListenSocketFactory& socket_factory) override;
 
   static void setDisableKernelBpfPacketRoutingForTest(bool val) {
     disable_kernel_bpf_packet_routing_for_test_ = val;
@@ -150,7 +151,18 @@ protected:
       EnvoyQuicCryptoServerStreamFactoryInterface& crypto_server_stream_factory,
       EnvoyQuicProofSourceFactoryInterface& proof_source_factory,
       QuicConnectionIdGeneratorPtr&& cid_generator,
-      QuicConnectionIdObserverPtr connection_id_observer);
+      QuicConnectionIdObserverPtr connection_id_observer,
+      QuicConnectionIdWorkerSelector worker_selector);
+
+  // Per-address state for CID generation and BPF routing.
+  // Each reuseport group (local address) gets its own factory and maps.
+  struct PerAddressState {
+    EnvoyQuicConnectionIdGeneratorFactoryPtr cid_generator_factory_;
+    QuicConnectionIdWorkerSelector worker_selector_;
+    bool kernel_worker_routing_{};
+  };
+
+  PerAddressState& getOrCreatePerAddressState(const Network::Socket& socket);
 
 private:
   friend class ActiveQuicListenerFactoryPeer;
@@ -160,7 +172,6 @@ private:
   absl::optional<std::reference_wrapper<EnvoyQuicProofSourceFactoryInterface>>
       proof_source_factory_;
   EnvoyQuicConnectionDebugVisitorFactoryInterfacePtr connection_debug_visitor_factory_;
-  EnvoyQuicConnectionIdGeneratorFactoryPtr quic_cid_generator_factory_;
   EnvoyQuicServerPreferredAddressConfigPtr server_preferred_address_config_;
   quic::QuicConfig quic_config_;
   const uint32_t concurrency_;
@@ -168,10 +179,15 @@ private:
   QuicStatNames& quic_stat_names_;
   const uint32_t packets_to_read_to_connection_count_ratio_;
   const Network::Socket::OptionsSharedPtr options_{std::make_shared<Network::Socket::Options>()};
-  QuicConnectionIdWorkerSelector worker_selector_;
-  bool kernel_worker_routing_{};
   Server::Configuration::ListenerFactoryContext& context_;
   bool reject_new_connections_{};
+
+  // Stored for deferred per-address factory creation.
+  EnvoyQuicConnectionIdGeneratorConfigFactory* cid_generator_config_factory_{};
+  ProtobufTypes::MessagePtr cid_generator_config_message_;
+  ProtobufMessage::ValidationVisitor* validation_visitor_{};
+
+  absl::flat_hash_map<std::string, PerAddressState> per_address_state_;
 
   static bool disable_kernel_bpf_packet_routing_for_test_;
 };

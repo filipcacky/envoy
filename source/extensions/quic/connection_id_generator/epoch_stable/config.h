@@ -19,6 +19,7 @@ public:
                                          ProtobufMessage::ValidationVisitor& validation_visitor,
                                          Server::Configuration::FactoryContext& context) override;
   std::string name() const override { return "envoy.quic.connection_id_generator.epoch_stable"; }
+  bool hasStatefulConnectionIdWorkerSelector() const override { return true; }
 };
 
 DECLARE_FACTORY(ConfigFactory);

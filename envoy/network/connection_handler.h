@@ -297,6 +297,15 @@ public:
   virtual const Network::Socket::OptionsSharedPtr& socketOptions() const PURE;
 
   virtual bool hasStatefulConnectionIdWorkerSelector() const { return false; }
+
+  /**
+   * Per-address initialization called on the main thread after sockets are created
+   * but before workers start. Allows setting up per-reuseport-group state (e.g. eBPF programs).
+   */
+  virtual absl::Status doFinalPreWorkerInit(Network::ListenSocketFactory& socket_factory) {
+    UNREFERENCED_PARAMETER(socket_factory);
+    return absl::OkStatus();
+  }
 };
 
 using ActiveUdpListenerFactoryPtr = std::unique_ptr<ActiveUdpListenerFactory>;

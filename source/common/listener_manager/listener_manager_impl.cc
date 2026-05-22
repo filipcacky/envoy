@@ -819,6 +819,14 @@ bool ListenerManagerImpl::doFinalPreWorkerListenerInit(ListenerImpl& listener) {
         return false;
       }
     }
+    {
+      absl::Status success = listener.doFinalPreWorkerInit();
+      if (!success.ok()) {
+        ENVOY_LOG(error, "final pre-worker listener init for listener '{}' failed: {}",
+                  listener.name(), success.message());
+        return false;
+      }
+    }
     return true;
   }
   END_TRY

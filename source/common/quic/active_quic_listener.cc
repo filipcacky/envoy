@@ -345,23 +345,24 @@ ActiveQuicListenerFactory::ActiveQuicListenerFactory(
     connection_debug_visitor_factory_ = factory.createFactory(*message, context_);
   }
 
-  // Initialize connection ID generator factory.
-  envoy::config::core::v3::TypedExtensionConfig cid_generator_config;
-  if (!config.has_connection_id_generator_config()) {
-    cid_generator_config.set_name("envoy.quic.deterministic_connection_id_generator");
-    envoy::extensions::quic::connection_id_generator::v3::DeterministicConnectionIdGeneratorConfig
-        empty_connection_id_generator_config;
-    cid_generator_config.mutable_typed_config()->PackFrom(empty_connection_id_generator_config);
-  } else {
-    cid_generator_config = config.connection_id_generator_config();
+  // Store CID generator config for deferred per-address factory creation.
+  {
+    envoy::config::core::v3::TypedExtensionConfig cid_generator_config;
+    if (!config.has_connection_id_generator_config()) {
+      cid_generator_config.set_name("envoy.quic.deterministic_connection_id_generator");
+      envoy::extensions::quic::connection_id_generator::v3::DeterministicConnectionIdGeneratorConfig
+          empty_connection_id_generator_config;
+      cid_generator_config.mutable_typed_config()->PackFrom(empty_connection_id_generator_config);
+    } else {
+      cid_generator_config = config.connection_id_generator_config();
+    }
+    cid_generator_config_factory_ =
+        &Config::Utility::getAndCheckFactory<EnvoyQuicConnectionIdGeneratorConfigFactory>(
+            cid_generator_config);
+    cid_generator_config_message_ = Config::Utility::translateToFactoryConfig(
+        cid_generator_config, validation_visitor, *cid_generator_config_factory_);
+    validation_visitor_ = &validation_visitor;
   }
-  auto& cid_generator_config_factory =
-      Config::Utility::getAndCheckFactory<EnvoyQuicConnectionIdGeneratorConfigFactory>(
-          cid_generator_config);
-  quic_cid_generator_factory_ = cid_generator_config_factory.createQuicConnectionIdGeneratorFactory(
-      *Config::Utility::translateToFactoryConfig(cid_generator_config, validation_visitor,
-                                                 cid_generator_config_factory),
-      validation_visitor, context_);
 
   if (config.has_server_preferred_address_config()) {
     const envoy::config::core::v3::TypedExtensionConfig& server_preferred_address_config =
@@ -376,20 +377,41 @@ ActiveQuicListenerFactory::ActiveQuicListenerFactory(
                                                        server_preferred_address_config_factory),
             validation_visitor, context_.serverFactoryContext());
   }
+}
 
-  worker_selector_ =
-      quic_cid_generator_factory_->getCompatibleConnectionIdWorkerSelector(concurrency_);
+absl::Status
+ActiveQuicListenerFactory::doFinalPreWorkerInit(Network::ListenSocketFactory& socket_factory) {
+  if (socket_factory.socketType() != Network::Socket::Type::Datagram) {
+    return absl::OkStatus();
+  }
+  const std::string addr_key = socket_factory.localAddress()->asString();
+  if (per_address_state_.contains(addr_key)) {
+    return absl::OkStatus();
+  }
+
+  PerAddressState state;
+  state.cid_generator_factory_ =
+      cid_generator_config_factory_->createQuicConnectionIdGeneratorFactory(
+          *cid_generator_config_message_, *validation_visitor_, context_);
+
+  state.worker_selector_ =
+      state.cid_generator_factory_->getCompatibleConnectionIdWorkerSelector(concurrency_);
+
   if (!disable_kernel_bpf_packet_routing_for_test_) {
     if (concurrency_ > 1) {
-      auto opt_or_error =
-          quic_cid_generator_factory_->createCompatibleLinuxBpfSocketOption(concurrency_);
+      auto opt_or_error = state.cid_generator_factory_->createCompatibleLinuxBpfSocketOption(
+          concurrency_);
       switch (opt_or_error.status().code()) {
       case absl::StatusCode::kOk:
-        kernel_worker_routing_ = true;
         if (opt_or_error.value() != nullptr) {
-          options_->push_back(opt_or_error.value());
+          state.kernel_worker_routing_ = true;
+          // Apply BPF socket option to the first worker's socket.
+          auto& first_socket = *socket_factory.getListenSocket(0);
+          opt_or_error.value()->setOption(first_socket,
+                                          envoy::config::core::v3::SocketOption::STATE_BOUND);
         }
-      case absl::StatusCode::kUnavailable:
+        state.kernel_worker_routing_ = true;
+      case absl::StatusCode::kUnimplemented:
         ENVOY_LOG(warn,
                   "Efficient routing of QUIC packets to the correct worker is not supported or "
                   "not implemented by Envoy on this platform or by the configured "
@@ -400,10 +422,22 @@ ActiveQuicListenerFactory::ActiveQuicListenerFactory(
         break;
       }
     } else {
-      ENVOY_LOG(info, "Not applying BPF because concurrency is 1");
-      kernel_worker_routing_ = true;
+      state.kernel_worker_routing_ = true;
     }
-  };
+  }
+
+  per_address_state_.emplace(addr_key, std::move(state));
+  return absl::OkStatus();
+}
+
+ActiveQuicListenerFactory::PerAddressState&
+ActiveQuicListenerFactory::getOrCreatePerAddressState(const Network::Socket& socket) {
+  const std::string addr_key = socket.connectionInfoProvider().localAddress()->asString();
+  auto it = per_address_state_.find(addr_key);
+  RELEASE_ASSERT(
+      it != per_address_state_.end(),
+      fmt::format("PerAddressState not found for {}; doFinalPreWorkerInit not called?", addr_key));
+  return it->second;
 }
 
 Network::ConnectionHandler::ActiveUdpListenerPtr ActiveQuicListenerFactory::createActiveUdpListener(
@@ -446,15 +480,16 @@ Network::ConnectionHandler::ActiveUdpListenerPtr ActiveQuicListenerFactory::crea
     }
   }
 
-  quic_cid_generator_factory_->registerWorkerSocket(worker_index, *listen_socket_ptr);
+  auto& per_addr = getOrCreatePerAddressState(*listen_socket_ptr);
+  per_addr.cid_generator_factory_->registerWorkerSocket(worker_index, *listen_socket_ptr);
 
   return createActiveQuicListener(
       runtime, worker_index, concurrency_, dispatcher, parent, std::move(listen_socket_ptr), config,
-      quic_config_, kernel_worker_routing_, enabled_, quic_stat_names_,
+      quic_config_, per_addr.kernel_worker_routing_, enabled_, quic_stat_names_,
       packets_to_read_to_connection_count_ratio_, crypto_server_stream_factory_.value(),
       proof_source_factory_.value(),
-      quic_cid_generator_factory_->createQuicConnectionIdGenerator(worker_index),
-      quic_cid_generator_factory_->createConnectionIdObserver());
+      per_addr.cid_generator_factory_->createQuicConnectionIdGenerator(worker_index),
+      per_addr.cid_generator_factory_->createConnectionIdObserver(), per_addr.worker_selector_);
 }
 
 Network::ConnectionHandler::ActiveUdpListenerPtr
@@ -468,7 +503,8 @@ ActiveQuicListenerFactory::createActiveQuicListener(
     EnvoyQuicCryptoServerStreamFactoryInterface& crypto_server_stream_factory,
     EnvoyQuicProofSourceFactoryInterface& proof_source_factory,
     QuicConnectionIdGeneratorPtr&& cid_generator,
-    QuicConnectionIdObserverPtr connection_id_observer) {
+    QuicConnectionIdObserverPtr connection_id_observer,
+    QuicConnectionIdWorkerSelector worker_selector) {
   bool enable_session_idle_list = false;
   for (const auto& action :
        context_.serverFactoryContext().bootstrap().overload_manager().actions()) {
@@ -481,7 +517,7 @@ ActiveQuicListenerFactory::createActiveQuicListener(
       runtime, worker_index, concurrency, dispatcher, parent, std::move(listen_socket),
       listener_config, quic_config, kernel_worker_routing, enabled, quic_stat_names,
       packets_to_read_to_connection_count_ratio, crypto_server_stream_factory, proof_source_factory,
-      std::move(cid_generator), worker_selector_,
+      std::move(cid_generator), worker_selector,
       makeOptRefFromPtr(connection_debug_visitor_factory_.get()), std::move(connection_id_observer),
       reject_new_connections_, enable_session_idle_list);
 }
