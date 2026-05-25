@@ -159,10 +159,20 @@ HotRestartingParent::Internal::getListenSocketsForChild(const HotRestartMessage:
           // worker_index() will default to 0 if not set which is the behavior before this field
           // was added. Thus, this should be safe for both roll forward and roll back.
           if (request.pass_listen_socket().worker_index() < server_->options().concurrency()) {
+            const auto listen_socket =
+                socket_factory->getListenSocket(request.pass_listen_socket().worker_index());
+
             wrapped_reply.mutable_reply()->mutable_pass_listen_socket()->set_fd(
-                socket_factory->getListenSocket(request.pass_listen_socket().worker_index())
-                    ->ioHandle()
-                    .fdDoNotUse());
+                listen_socket->ioHandle().fdDoNotUse());
+
+            // If this is a UDP listener with a BPF program, include the prog_fd.
+            if (socket_factory->socketType() == Network::Socket::Type::Datagram) {
+              const os_fd_t bpf_fd = listen_socket->ioHandle().bpfProgFd();
+              if (bpf_fd >= 0) {
+                wrapped_reply.mutable_reply()->mutable_pass_listen_socket()->set_bpf_prog_fd(
+                    bpf_fd);
+              }
+            }
           }
           break;
         }

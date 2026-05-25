@@ -30,6 +30,11 @@ public:
     bool enable_reuse_port_default_;
   };
 
+  struct ListenSocketResult {
+    int fd_{-1};
+    int bpf_prog_fd_{-1};
+  };
+
   virtual ~HotRestart() = default;
 
   /**
@@ -45,10 +50,11 @@ public:
    * @param worker_index supplies the socket/worker index to fetch. When using reuse_port sockets
    *        each socket is fetched individually to ensure no connection loss.
    * @param network_namespace supplies the network namespace of the socket, if any.
-   * @return int the fd or -1 if there is no bound listen port in the parent.
+   * @return ListenSocketResult containing the fd (-1 if not found) and optional bpf_prog_fd.
    */
-  virtual int duplicateParentListenSocket(const std::string& address, uint32_t worker_index,
-                                          absl::string_view network_namespace) PURE;
+  virtual ListenSocketResult
+  duplicateParentListenSocket(const std::string& address, uint32_t worker_index,
+                              absl::string_view network_namespace) PURE;
 
   /**
    * Registers a UdpListenerConfig as a possible receiver of udp packets forwarded from the

@@ -394,23 +394,28 @@ ActiveQuicListenerFactory::doFinalPreWorkerInit(Network::ListenSocketFactory& so
       cid_generator_config_factory_->createQuicConnectionIdGeneratorFactory(
           *cid_generator_config_message_, *validation_visitor_, context_);
 
+  const os_fd_t received_bpf_prog_fd = socket_factory.getListenSocket(0)->ioHandle().bpfProgFd();
+
   state.worker_selector_ =
       state.cid_generator_factory_->getCompatibleConnectionIdWorkerSelector(concurrency_);
 
   if (!disable_kernel_bpf_packet_routing_for_test_) {
-    if (concurrency_ > 1) {
+    if (concurrency_ > 1 ||
+        cid_generator_config_factory_->hasStatefulConnectionIdWorkerSelector()) {
       auto opt_or_error = state.cid_generator_factory_->createCompatibleLinuxBpfSocketOption(
-          concurrency_, *socket_factory.localAddress());
+          concurrency_, received_bpf_prog_fd);
       switch (opt_or_error.status().code()) {
-      case absl::StatusCode::kOk:
+      case absl::StatusCode::kOk: {
+        state.kernel_worker_routing_ = true;
+
+        const auto listen_socket = socket_factory.getListenSocket(0);
+        listen_socket->ioHandle().setBpfProgFd(state.cid_generator_factory_->bpfProgFd());
         if (opt_or_error.value() != nullptr) {
-          state.kernel_worker_routing_ = true;
-          // Apply BPF socket option to the first worker's socket.
-          auto& first_socket = *socket_factory.getListenSocket(0);
-          opt_or_error.value()->setOption(first_socket,
+          opt_or_error.value()->setOption(*listen_socket,
                                           envoy::config::core::v3::SocketOption::STATE_BOUND);
         }
-        state.kernel_worker_routing_ = true;
+        break;
+      }
       case absl::StatusCode::kUnimplemented:
         ENVOY_LOG(warn,
                   "Efficient routing of QUIC packets to the correct worker is not supported or "

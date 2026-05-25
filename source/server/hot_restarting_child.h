@@ -50,8 +50,9 @@ public:
   void initialize(Event::Dispatcher& dispatcher);
   void shutdown();
 
-  int duplicateParentListenSocket(const std::string& address, uint32_t worker_index,
-                                  absl::string_view network_namespace);
+  HotRestart::ListenSocketResult
+  duplicateParentListenSocket(const std::string& address, uint32_t worker_index,
+                              absl::string_view network_namespace);
   void registerUdpForwardingListener(Network::Address::InstanceConstSharedPtr address,
                                      std::shared_ptr<Network::UdpListenerConfig> listener_config);
   // From Network::ParentDrainedCallbackRegistrar.

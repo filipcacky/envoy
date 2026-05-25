@@ -49,8 +49,7 @@ public:
    * @param concurrency the total number of worker threads.
    */
   virtual absl::StatusOr<Network::Socket::OptionConstSharedPtr>
-  createCompatibleLinuxBpfSocketOption(uint32_t concurrency,
-                                       const Network::Address::Instance& address) PURE;
+  createCompatibleLinuxBpfSocketOption(uint32_t concurrency, os_fd_t prog_fd = INVALID_SOCKET) PURE;
 
   /**
    * Returns a function to retrieve the worker index associated with a QUIC packet; the same
@@ -66,6 +65,7 @@ public:
 
   virtual QuicConnectionIdObserverPtr createConnectionIdObserver() { return nullptr; }
   virtual bool hasStatefulConnectionIdWorkerSelector() const { return false; }
+  virtual os_fd_t bpfProgFd() const { return INVALID_SOCKET; }
 };
 
 using EnvoyQuicConnectionIdGeneratorFactoryPtr =

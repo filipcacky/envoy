@@ -57,6 +57,9 @@ public:
    */
   virtual os_fd_t fdDoNotUse() const PURE;
 
+  virtual os_fd_t bpfProgFd() const { return INVALID_SOCKET; }
+  virtual void setBpfProgFd(os_fd_t) {}
+
   /**
    * Clean up IoHandle resources
    */

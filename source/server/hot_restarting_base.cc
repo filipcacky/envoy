@@ -101,17 +101,25 @@ bool RpcStream::sendHotRestartMessage(sockaddr_un& address, const HotRestartMess
     message.msg_iovlen = 1;
 
     // Control data stuff, only relevant for the fd passing done with PassListenSocketReply.
-    uint8_t control_buffer[CMSG_SPACE(sizeof(int))];
+    uint8_t control_buffer[CMSG_SPACE(sizeof(int) * 2)];
     if (replyIsExpectedType(&proto, HotRestartMessage::Reply::kPassListenSocket) &&
         proto.reply().pass_listen_socket().fd() != -1) {
-      memset(control_buffer, 0, CMSG_SPACE(sizeof(int)));
+      const int listen_fd = proto.reply().pass_listen_socket().fd();
+      const int bpf_fd = proto.reply().pass_listen_socket().bpf_prog_fd();
+      const int num_fds = (bpf_fd != -1 && bpf_fd != 0) ? 2 : 1;
+
+      memset(control_buffer, 0, CMSG_SPACE(sizeof(int) * num_fds));
       message.msg_control = control_buffer;
-      message.msg_controllen = CMSG_SPACE(sizeof(int));
+      message.msg_controllen = CMSG_SPACE(sizeof(int) * num_fds);
       cmsghdr* control_message = CMSG_FIRSTHDR(&message);
       control_message->cmsg_level = SOL_SOCKET;
       control_message->cmsg_type = SCM_RIGHTS;
-      control_message->cmsg_len = CMSG_LEN(sizeof(int));
-      *reinterpret_cast<int*>(CMSG_DATA(control_message)) = proto.reply().pass_listen_socket().fd();
+      control_message->cmsg_len = CMSG_LEN(sizeof(int) * num_fds);
+      int* fd_data = reinterpret_cast<int*>(CMSG_DATA(control_message));
+      fd_data[0] = listen_fd;
+      if (num_fds == 2) {
+        fd_data[1] = bpf_fd;
+      }
       ASSERT(sent == total_size, "an fd passing message was too long for one sendmsg().");
     }
 
@@ -172,11 +180,18 @@ void RpcStream::getPassedFdIfPresent(HotRestartMessage* out, msghdr* message) {
                    "recvmsg() came with control data when the message's purpose was not to pass a "
                    "file descriptor.");
 
-    out->mutable_reply()->mutable_pass_listen_socket()->set_fd(
-        *reinterpret_cast<int*>(CMSG_DATA(cmsg)));
+    const size_t fd_data_len = cmsg->cmsg_len - CMSG_LEN(0);
+    const size_t num_fds = fd_data_len / sizeof(int);
+    RELEASE_ASSERT(num_fds >= 1 && num_fds <= 2,
+                   "expected 1 or 2 file descriptors in PassListenSocket reply.");
+    int* fd_data = reinterpret_cast<int*>(CMSG_DATA(cmsg));
+    out->mutable_reply()->mutable_pass_listen_socket()->set_fd(fd_data[0]);
+    if (num_fds == 2) {
+      out->mutable_reply()->mutable_pass_listen_socket()->set_bpf_prog_fd(fd_data[1]);
+    }
 
     RELEASE_ASSERT(CMSG_NXTHDR(message, cmsg) == nullptr,
-                   "More than one control data on a single hot restart recvmsg().");
+                   "More than one control message on a single hot restart recvmsg().");
   }
 }
 
@@ -214,20 +229,20 @@ std::unique_ptr<HotRestartMessage> RpcStream::receiveHotRestartMessage(Blocking 
 
   iovec iov[1];
   msghdr message;
-  uint8_t control_buffer[CMSG_SPACE(sizeof(int))];
+  uint8_t control_buffer[CMSG_SPACE(sizeof(int) * 2)];
   std::unique_ptr<HotRestartMessage> ret = nullptr;
   Api::OsSysCalls& os_sys_calls = Api::OsSysCallsSingleton::get();
   while (!ret) {
     iov[0].iov_base = recv_buf_.data() + cur_msg_recvd_bytes_;
     iov[0].iov_len = MaxSendmsgSize;
 
-    // We always setup to receive an FD even though most messages do not pass one.
-    memset(control_buffer, 0, CMSG_SPACE(sizeof(int)));
+    // We always setup to receive FDs even though most messages do not pass any.
+    memset(control_buffer, 0, CMSG_SPACE(sizeof(int) * 2));
     memset(&message, 0, sizeof(message));
     message.msg_iov = iov;
     message.msg_iovlen = 1;
     message.msg_control = control_buffer;
-    message.msg_controllen = CMSG_SPACE(sizeof(int));
+    message.msg_controllen = CMSG_SPACE(sizeof(int) * 2);
 
     const Api::SysCallSizeResult recv_result = os_sys_calls.recvmsg(domain_socket_, &message, 0);
     if (block == Blocking::No && recv_result.return_value_ == -1 &&

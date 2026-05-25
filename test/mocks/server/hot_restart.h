@@ -15,7 +15,7 @@ public:
 
   // Server::HotRestart
   MOCK_METHOD(void, drainParentListeners, ());
-  MOCK_METHOD(int, duplicateParentListenSocket,
+  MOCK_METHOD(ListenSocketResult, duplicateParentListenSocket,
               (const std::string& address, uint32_t worker_index,
                absl::string_view network_namespace));
   MOCK_METHOD(void, registerUdpForwardingListener,

@@ -51,7 +51,7 @@ EnvoyDeterministicConnectionIdGeneratorFactory::createQuicConnectionIdGenerator(
 
 absl::StatusOr<Network::Socket::OptionConstSharedPtr>
 EnvoyDeterministicConnectionIdGeneratorFactory::createCompatibleLinuxBpfSocketOption(
-    uint32_t concurrency, const Network::Address::Instance&) {
+    uint32_t concurrency, os_fd_t) {
 #if defined(SO_ATTACH_REUSEPORT_CBPF) && defined(__linux__)
   // This BPF filter reads the 1st word of QUIC connection id in the UDP payload and mods it by the
   // number of workers to get the socket index in the SO_REUSEPORT socket groups. QUIC packets

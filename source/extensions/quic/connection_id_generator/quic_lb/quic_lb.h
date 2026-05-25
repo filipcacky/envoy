@@ -68,8 +68,7 @@ public:
   // EnvoyQuicConnectionIdGeneratorFactory.
   QuicConnectionIdGeneratorPtr createQuicConnectionIdGenerator(uint32_t worker_index) override;
   absl::StatusOr<Network::Socket::OptionConstSharedPtr>
-  createCompatibleLinuxBpfSocketOption(uint32_t concurrency,
-                                       const Network::Address::Instance&) override;
+  createCompatibleLinuxBpfSocketOption(uint32_t concurrency, os_fd_t) override;
   QuicConnectionIdWorkerSelector
   getCompatibleConnectionIdWorkerSelector(uint32_t concurrency) override;
 

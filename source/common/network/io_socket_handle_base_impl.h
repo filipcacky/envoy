@@ -18,6 +18,8 @@ public:
 
   // TODO(sbelair2)  To be removed when the fd is fully abstracted from clients.
   os_fd_t fdDoNotUse() const override { return fd_; }
+  os_fd_t bpfProgFd() const override { return bpf_prog_fd_; }
+  void setBpfProgFd(os_fd_t fd) override { bpf_prog_fd_ = fd; }
   bool isOpen() const override;
   bool wasConnected() const override;
   bool supportsMmsg() const override;
@@ -37,6 +39,7 @@ public:
 
 protected:
   os_fd_t fd_;
+  os_fd_t bpf_prog_fd_{INVALID_SOCKET};
   int socket_v6only_;
   const absl::optional<int> domain_;
   bool was_connected_ = false;

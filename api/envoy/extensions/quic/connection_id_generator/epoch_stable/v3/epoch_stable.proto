@@ -23,6 +23,4 @@ message Config {
   option (xds.annotations.v3.message_status).work_in_progress = true;
 
   google.protobuf.UInt32Value max_map_entries = 1;
-
-  google.protobuf.StringValue bpf_pin_path = 2 [(validate.rules).string = {min_len: 1}];
 }

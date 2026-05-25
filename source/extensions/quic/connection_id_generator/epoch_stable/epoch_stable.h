@@ -18,17 +18,14 @@ namespace ConnectionIdGenerator {
 namespace EpochStable {
 
 struct EpochStableConfig {
-  EpochStableConfig(uint32_t max_map_entries, std::string bpf_pin_path)
-      : max_map_entries(max_map_entries), bpf_pin_path(std::move(bpf_pin_path)) {}
+  explicit EpochStableConfig(uint32_t max_map_entries) : max_map_entries(max_map_entries) {}
   // TODO(filipcacky): use envoy limits?
   uint32_t max_map_entries;
-  // TODO(filipcacky): pass fd via hotrestarter without pinning?
-  std::string bpf_pin_path;
 };
 
 class EpochStableConnectionIdObserver : public QuicConnectionIdObserver {
 public:
-  EpochStableConnectionIdObserver(int socket_map_fd, uint32_t concurrency);
+  EpochStableConnectionIdObserver(os_fd_t socket_map_fd, uint32_t concurrency);
 
   void onConnectionIdIssued(const quic::QuicConnectionId& connection_id,
                             const Network::Socket& socket) override;
@@ -37,7 +34,7 @@ public:
 private:
   static uint64_t cidToKey(const quic::QuicConnectionId& cid);
 
-  const int socket_map_fd_;
+  const os_fd_t socket_map_fd_;
   const uint32_t concurrency_;
 };
 
@@ -49,33 +46,29 @@ public:
 
   QuicConnectionIdGeneratorPtr createQuicConnectionIdGenerator(uint32_t worker_index) override;
   absl::StatusOr<Network::Socket::OptionConstSharedPtr>
-  createCompatibleLinuxBpfSocketOption(uint32_t concurrency,
-                                       const Network::Address::Instance& address) override;
+  createCompatibleLinuxBpfSocketOption(uint32_t concurrency, os_fd_t prog_fd) override;
   QuicConnectionIdWorkerSelector
   getCompatibleConnectionIdWorkerSelector(uint32_t concurrency) override;
   QuicConnectionIdObserverPtr createConnectionIdObserver() override;
   bool hasStatefulConnectionIdWorkerSelector() const override { return true; }
+  os_fd_t bpfProgFd() const override { return prog_fd_; }
   void registerWorkerSocket(uint32_t worker_index, const Network::Socket& socket) override;
 
 private:
   Factory(const EpochStableConfig& config);
 
-  std::string makePinPath(const Network::Address::Instance& address);
-
-  absl::Status loadPinnedMaps(const Network::Address::Instance& address);
-  absl::Status pinProgram(const Network::Address::Instance& address);
+  absl::Status loadMaps(os_fd_t);
   absl::Status loadBpfProgram();
   absl::Status cleanupAndError(absl::string_view message);
 
   const EpochStableConfig config_;
 
+  os_fd_t prog_fd_{INVALID_SOCKET};
 #if defined(__linux__)
   uint32_t concurrency_{0};
   std::atomic<uint32_t> registered_workers_{0};
-  int socket_map_fd_{-1};
-  int concurrency_fd_{-1};
-  int prog_fd_{-1};
-  struct bpf_object* bpf_obj_{nullptr};
+  os_fd_t socket_map_fd_{INVALID_SOCKET};
+  os_fd_t concurrency_fd_{INVALID_SOCKET};
 #endif
 };
 

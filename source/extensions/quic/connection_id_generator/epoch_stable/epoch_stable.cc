@@ -16,7 +16,7 @@ namespace Extensions {
 namespace ConnectionIdGenerator {
 namespace EpochStable {
 
-EpochStableConnectionIdObserver::EpochStableConnectionIdObserver(int socket_map_fd,
+EpochStableConnectionIdObserver::EpochStableConnectionIdObserver(os_fd_t socket_map_fd,
                                                                  uint32_t concurrency)
     : socket_map_fd_(socket_map_fd), concurrency_(concurrency) {
 #if not defined(__linux__)
@@ -69,17 +69,14 @@ Factory::Factory(const EpochStableConfig& config) : config_(config) {}
 
 Factory::~Factory() {
 #if defined(__linux__)
-  if (bpf_obj_ != nullptr) {
-    bpf_object__close(bpf_obj_);
-    // FDs obtained from bpf_program__fd/bpf_map__fd are owned by bpf_obj_ and closed with it.
-    // Don't double-close them.
-  } else {
-    if (socket_map_fd_ >= 0) {
-      close(socket_map_fd_);
-    }
-    if (concurrency_fd_ >= 0) {
-      close(concurrency_fd_);
-    }
+  if (socket_map_fd_ >= 0) {
+    close(socket_map_fd_);
+  }
+  if (concurrency_fd_ >= 0) {
+    close(concurrency_fd_);
+  }
+  if (prog_fd_ >= 0) {
+    close(prog_fd_);
   }
 #endif
 }
@@ -88,18 +85,8 @@ absl::StatusOr<std::unique_ptr<Factory>> Factory::create(const EpochStableConfig
   return std::unique_ptr<Factory>(new Factory(config));
 }
 
-std::string Factory::makePinPath(const Network::Address::Instance& address) {
-  return absl::StrCat(config_.bpf_pin_path, "_", absl::HashOf(address.asStringView()));
-}
-
-absl::Status Factory::loadPinnedMaps(const Network::Address::Instance& address) {
+absl::Status Factory::loadMaps(os_fd_t prog_fd) {
 #if defined(__linux__)
-  int prog_fd = bpf_obj_get(makePinPath(address).c_str());
-  if (prog_fd < 0) {
-    return absl::NotFoundError(
-        fmt::format("no pinned program at '{}': {}", config_.bpf_pin_path, errorDetails(errno)));
-  }
-
   bpf_prog_info info{};
   __u32 info_len = sizeof(info);
   std::array<uint32_t, 8> map_ids{};
@@ -107,37 +94,20 @@ absl::Status Factory::loadPinnedMaps(const Network::Address::Instance& address) 
   info.map_ids = reinterpret_cast<__u64>(map_ids.data());
 
   if (bpf_prog_get_info_by_fd(prog_fd, &info, &info_len) < 0) {
-    close(prog_fd);
-    return absl::InternalError(
-        fmt::format("failed to query pinned program: {}", errorDetails(errno)));
+    return absl::InternalError(fmt::format("failed to query program: {}", errorDetails(errno)));
   }
-  close(prog_fd);
-
-  const auto cleanup = [this]() {
-    if (socket_map_fd_ >= 0) {
-      close(socket_map_fd_);
-      socket_map_fd_ = -1;
-    }
-    if (concurrency_fd_ >= 0) {
-      close(concurrency_fd_);
-      concurrency_fd_ = -1;
-    }
-  };
 
   for (__u32 i = 0; i < info.nr_map_ids; i++) {
     int map_fd = bpf_map_get_fd_by_id(map_ids[i]);
     if (map_fd < 0) {
-      cleanup();
-      return absl::InternalError(
+      return cleanupAndError(
           fmt::format("failed to open map id {}: {}", map_ids[i], errorDetails(errno)));
     }
 
     bpf_map_info map_info{};
     __u32 map_info_len = sizeof(map_info);
     if (bpf_map_get_info_by_fd(map_fd, &map_info, &map_info_len) < 0) {
-      close(map_fd);
-      cleanup();
-      return absl::InternalError("failed to query map info");
+      return cleanupAndError("failed to query map info");
     }
 
     if (strcmp(map_info.name, "socket_map") == 0) {
@@ -150,26 +120,15 @@ absl::Status Factory::loadPinnedMaps(const Network::Address::Instance& address) 
   }
 
   if (socket_map_fd_ < 0 || concurrency_fd_ < 0) {
-    cleanup();
-    return absl::InternalError("pinned program missing required maps");
+    return cleanupAndError("program missing required maps");
   }
 
   return absl::OkStatus();
 #else
-  UNREFERENCED_PARAMETER(address);
+  UNREFERENCED_PARAMETER(prog_fd);
   return absl::UnimplementedError(
       "envoy.quic.epoch_stable_routing_connection_id_generator not available");
 #endif
-}
-
-absl::Status Factory::pinProgram(const Network::Address::Instance& address) {
-#if defined(__linux__)
-  if (bpf_obj_pin(prog_fd_, makePinPath(address).c_str()) < 0) {
-    return absl::InternalError(fmt::format("bpf_obj_pin failed: {}", errorDetails(errno)));
-  }
-#endif
-  UNREFERENCED_PARAMETER(address);
-  return absl::OkStatus();
 }
 
 QuicConnectionIdGeneratorPtr Factory::createQuicConnectionIdGenerator(uint32_t) {
@@ -178,21 +137,19 @@ QuicConnectionIdGeneratorPtr Factory::createQuicConnectionIdGenerator(uint32_t) 
 }
 
 absl::StatusOr<Network::Socket::OptionConstSharedPtr>
-Factory::createCompatibleLinuxBpfSocketOption(uint32_t concurrency,
-                                              const Network::Address::Instance& address) {
+Factory::createCompatibleLinuxBpfSocketOption(uint32_t concurrency, os_fd_t prog_fd) {
 #if defined(SO_ATTACH_REUSEPORT_EBPF) && defined(__linux__)
   concurrency_ = concurrency;
 
-  const auto pinned = loadPinnedMaps(address);
-  if (pinned.ok()) {
+  prog_fd_ = prog_fd;
+  if (prog_fd_ != INVALID_SOCKET) {
+    const auto maps_status = loadMaps(prog_fd_);
+    RETURN_IF_NOT_OK_REF(maps_status);
+    ENVOY_LOG_MISC(error, "loaded maps");
     return nullptr;
-  }
-  if (pinned.code() == absl::StatusCode::kInternal) {
-    return pinned;
   }
 
   RETURN_IF_NOT_OK(loadBpfProgram());
-  RETURN_IF_NOT_OK(pinProgram(address));
 
   ENVOY_LOG_MISC(info, "epoch_stable: prog_fd={} socket_map_fd={} concurrency_fd={}", prog_fd_,
                  socket_map_fd_, concurrency_fd_);
@@ -200,7 +157,7 @@ Factory::createCompatibleLinuxBpfSocketOption(uint32_t concurrency,
   return std::make_shared<Network::SocketOptionImpl>(
       envoy::config::core::v3::SocketOption::STATE_BOUND, ENVOY_ATTACH_REUSEPORT_EBPF, prog_fd_);
 #else
-  UNREFERENCED_PARAMETER(address);
+  UNREFERENCED_PARAMETER(prog_fd);
   UNREFERENCED_PARAMETER(concurrency);
   return absl::UnimplementedError(
       "envoy.quic.epoch_stable_routing_connection_id_generator not available");
@@ -209,12 +166,12 @@ Factory::createCompatibleLinuxBpfSocketOption(uint32_t concurrency,
 
 absl::Status Factory::loadBpfProgram() {
 #if defined(__linux__)
-  bpf_obj_ = bpf_object__open_mem(route_bpf_data, route_bpf_data_len, nullptr);
-  if (bpf_obj_ == nullptr) {
+  auto bpf_obj = bpf_object__open_mem(route_bpf_data, route_bpf_data_len, nullptr);
+  if (bpf_obj == nullptr) {
     return absl::InternalError(fmt::format("bpf_object__open_mem: {}", errorDetails(errno)));
   }
 
-  struct bpf_map* socket_map = bpf_object__find_map_by_name(bpf_obj_, "socket_map");
+  struct bpf_map* socket_map = bpf_object__find_map_by_name(bpf_obj, "socket_map");
   if (socket_map == nullptr) {
     return cleanupAndError("socket_map not found in BPF object");
   }
@@ -223,12 +180,12 @@ absl::Status Factory::loadBpfProgram() {
     return cleanupAndError(fmt::format("bpf_map__set_max_entries: {}", errorDetails(errno)));
   }
 
-  if (bpf_object__load(bpf_obj_) < 0) {
+  if (bpf_object__load(bpf_obj) < 0) {
     return cleanupAndError(fmt::format("bpf_object__load: {}", errorDetails(errno)));
   }
 
   struct bpf_program* prog =
-      bpf_object__find_program_by_name(bpf_obj_, "epoch_stable_select_socket");
+      bpf_object__find_program_by_name(bpf_obj, "epoch_stable_select_socket");
   if (prog == nullptr) {
     return cleanupAndError("epoch_stable_select_socket not found");
   }
@@ -238,8 +195,8 @@ absl::Status Factory::loadBpfProgram() {
     return cleanupAndError("failed to get program fd");
   }
 
-  socket_map_fd_ = bpf_map__fd(bpf_object__find_map_by_name(bpf_obj_, "socket_map"));
-  concurrency_fd_ = bpf_map__fd(bpf_object__find_map_by_name(bpf_obj_, "concurrency"));
+  socket_map_fd_ = bpf_map__fd(bpf_object__find_map_by_name(bpf_obj, "socket_map"));
+  concurrency_fd_ = bpf_map__fd(bpf_object__find_map_by_name(bpf_obj, "concurrency"));
 
   if (socket_map_fd_ < 0 || concurrency_fd_ < 0) {
     return cleanupAndError("failed to get map fds");
@@ -253,13 +210,18 @@ absl::Status Factory::loadBpfProgram() {
 
 absl::Status Factory::cleanupAndError(absl::string_view message) {
 #if defined(__linux__)
-  if (bpf_obj_ != nullptr) {
-    bpf_object__close(bpf_obj_);
-    bpf_obj_ = nullptr;
+  if (socket_map_fd_ >= 0) {
+    close(socket_map_fd_);
+    socket_map_fd_ = INVALID_SOCKET;
   }
-  socket_map_fd_ = -1;
-  concurrency_fd_ = -1;
-  prog_fd_ = -1;
+  if (concurrency_fd_ >= 0) {
+    close(concurrency_fd_);
+    concurrency_fd_ = INVALID_SOCKET;
+  }
+  if (prog_fd_ >= 0) {
+    close(prog_fd_);
+    prog_fd_ = INVALID_SOCKET;
+  }
   return absl::InternalError(fmt::format("epoch_stable: {}", message));
 #else
   UNREFERENCED_PARAMETER(message);
@@ -269,11 +231,11 @@ absl::Status Factory::cleanupAndError(absl::string_view message) {
 
 void Factory::registerWorkerSocket(uint32_t worker_index, const Network::Socket& socket) {
 #if defined(__linux__)
-  if (socket_map_fd_ < 0) {
+  if (socket_map_fd_ == INVALID_SOCKET) {
     return;
   }
   uint64_t key = worker_index;
-  int fd = socket.ioHandle().fdDoNotUse();
+  os_fd_t fd = socket.ioHandle().fdDoNotUse();
   if (bpf_map_update_elem(socket_map_fd_, &key, &fd, BPF_ANY) < 0) {
     ENVOY_LOG_MISC(error, "epoch_stable: registerWorkerSocket worker={} fd={} failed: {}",
                    worker_index, fd, errorDetails(errno));
@@ -299,7 +261,7 @@ QuicConnectionIdWorkerSelector Factory::getCompatibleConnectionIdWorkerSelector(
 
 QuicConnectionIdObserverPtr Factory::createConnectionIdObserver() {
 #if defined(__linux__)
-  if (socket_map_fd_ < 0) {
+  if (socket_map_fd_ == INVALID_SOCKET) {
     return nullptr;
   }
   return std::make_unique<EpochStableConnectionIdObserver>(socket_map_fd_, concurrency_);

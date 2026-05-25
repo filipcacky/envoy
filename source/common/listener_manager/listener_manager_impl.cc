@@ -349,8 +349,8 @@ absl::StatusOr<Network::SocketSharedPtr> ProdListenerComponentFactory::createLis
           fmt::format("socket type {} not supported for pipes", toString(socket_type)));
     }
     const std::string addr = fmt::format("unix://{}", address->asString());
-    const int fd = server_.hotRestart().duplicateParentListenSocket(addr, worker_index, "");
-    Network::IoHandlePtr io_handle = std::make_unique<Network::IoSocketHandleImpl>(fd);
+    const auto result = server_.hotRestart().duplicateParentListenSocket(addr, worker_index, "");
+    Network::IoHandlePtr io_handle = std::make_unique<Network::IoSocketHandleImpl>(result.fd_);
     if (io_handle->isOpen()) {
       ENVOY_LOG(debug, "obtained socket for address {} from parent", addr);
       return std::make_shared<Network::UdsListenSocket>(std::move(io_handle), address);
@@ -368,20 +368,30 @@ absl::StatusOr<Network::SocketSharedPtr> ProdListenerComponentFactory::createLis
                                  : std::string(Network::Utility::UDP_SCHEME);
   const std::string addr = absl::StrCat(scheme, address->asString());
 
-  if (bind_type != BindType::NoBind && !creation_options.skip_hot_restart_socket_inheritance_) {
-    const int fd = server_.hotRestart().duplicateParentListenSocket(
+  if (bind_type != BindType::NoBind) {
+    const auto result = server_.hotRestart().duplicateParentListenSocket(
         addr, worker_index, address->networkNamespace().value_or(""));
-    if (fd != -1) {
-      ENVOY_LOG(debug, "obtained socket for address {} from parent", addr);
-      Network::IoHandlePtr io_handle = std::make_unique<Network::IoSocketHandleImpl>(fd);
-      if (socket_type == Network::Socket::Type::Stream) {
-        return std::make_shared<Network::TcpListenSocket>(std::move(io_handle), address, options);
-      } else {
-        auto socket = std::make_shared<Network::UdpListenSocket>(
-            std::move(io_handle), address, options,
-            server_.hotRestart().parentDrainedCallbackRegistrar());
-        return socket;
+
+    if (result.fd_ != -1) {
+      if (!creation_options.skip_hot_restart_socket_inheritance_) {
+        ENVOY_LOG(debug, "obtained socket for address {} from parent", addr);
+        Network::IoHandlePtr io_handle =
+            std::make_unique<Network::IoSocketHandleImpl>(result.fd_, false, absl::nullopt, 0);
+        if (socket_type == Network::Socket::Type::Stream) {
+          return std::make_shared<Network::TcpListenSocket>(std::move(io_handle), address, options);
+        } else {
+          auto socket = std::make_shared<Network::UdpListenSocket>(
+              std::move(io_handle), address, options,
+              server_.hotRestart().parentDrainedCallbackRegistrar());
+          return socket;
+        }
       }
+      // Stateful routing: don't inherit the listen socket, but create a new one
+      // with the bpf_prog_fd attached so the CID generator factory can reuse it.
+      auto listen_socket =
+          std::make_shared<Network::UdpListenSocket>(address, options, true, creation_options);
+      listen_socket->ioHandle().setBpfProgFd(result.bpf_prog_fd_);
+      return listen_socket;
     }
   }
 
