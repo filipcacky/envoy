@@ -12,10 +12,17 @@ char _license[] SEC("license") = "Apache-2";
 
 struct {
   __uint(type, BPF_MAP_TYPE_SOCKHASH);
+  __uint(key_size, sizeof(__u32));
+  __uint(value_size, sizeof(__u32));
+  __uint(max_entries, 65536);
+} listen_map SEC(".maps");
+
+struct {
+  __uint(type, BPF_MAP_TYPE_SOCKHASH);
   __uint(key_size, QUIC_CID_KEY_SIZE);
   __uint(value_size, sizeof(__u32));
   __uint(max_entries, 65536);
-} socket_map SEC(".maps");
+} cid_map SEC(".maps");
 
 struct {
   __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -69,7 +76,7 @@ int epoch_stable_select_socket(struct sk_reuseport_md* ctx) {
     return rc;
   }
 
-  rc = bpf_sk_select_reuseport(ctx, &socket_map, &dcid, 0);
+  rc = bpf_sk_select_reuseport(ctx, &cid_map, &dcid, 0);
   if (rc == 0) {
     return SK_PASS;
   }
@@ -84,8 +91,8 @@ int epoch_stable_select_socket(struct sk_reuseport_md* ctx) {
     return SK_DROP;
   }
 
-  __u64 worker_key = dcid % *total;
-  rc = bpf_sk_select_reuseport(ctx, &socket_map, &worker_key, 0);
+  __u32 worker_key = dcid % *total;
+  rc = bpf_sk_select_reuseport(ctx, &listen_map, &worker_key, 0);
   if (rc == 0) {
     return SK_PASS;
   }

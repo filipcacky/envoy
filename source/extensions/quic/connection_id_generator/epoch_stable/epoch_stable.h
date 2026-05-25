@@ -25,7 +25,7 @@ struct EpochStableConfig {
 
 class EpochStableConnectionIdObserver : public QuicConnectionIdObserver {
 public:
-  EpochStableConnectionIdObserver(os_fd_t socket_map_fd, uint32_t concurrency);
+  EpochStableConnectionIdObserver(os_fd_t cid_map_fd, uint32_t concurrency);
 
   void onConnectionIdIssued(const quic::QuicConnectionId& connection_id,
                             const Network::Socket& socket) override;
@@ -34,7 +34,7 @@ public:
 private:
   static uint64_t cidToKey(const quic::QuicConnectionId& cid);
 
-  const os_fd_t socket_map_fd_;
+  const os_fd_t cid_map_fd_;
   const uint32_t concurrency_;
 };
 
@@ -67,7 +67,8 @@ private:
 #if defined(__linux__)
   uint32_t concurrency_{0};
   std::atomic<uint32_t> registered_workers_{0};
-  os_fd_t socket_map_fd_{INVALID_SOCKET};
+  os_fd_t cid_map_fd_{INVALID_SOCKET};
+  os_fd_t listen_map_fd_{INVALID_SOCKET};
   os_fd_t concurrency_fd_{INVALID_SOCKET};
 #endif
 };
