@@ -81,6 +81,10 @@ public:
    * @return a status indicating if an error occurred.
    */
   virtual absl::Status doFinalPreWorkerInit() PURE;
+
+  virtual absl::StatusOr<SocketSharedPtr> createEbpfRoutedSocket() {
+    return absl::UnimplementedError("createEbpfRoutedSocket not supported");
+  }
 };
 
 /**

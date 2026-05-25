@@ -35,7 +35,8 @@ bool ActiveQuicListenerFactory::disable_kernel_bpf_packet_routing_for_test_ = fa
 ActiveQuicListener::ActiveQuicListener(
     Runtime::Loader& runtime, uint32_t worker_index, uint32_t concurrency,
     Event::Dispatcher& dispatcher, Network::UdpConnectionHandler& parent,
-    Network::SocketSharedPtr&& listen_socket, Network::ListenerConfig& listener_config,
+    Network::SocketSharedPtr&& listen_socket, Network::SocketSharedPtr established_socket,
+    Network::ListenerConfig& listener_config,
     const quic::QuicConfig& quic_config, bool kernel_worker_routing,
     const envoy::config::core::v3::RuntimeFeatureFlag& enabled, QuicStatNames& quic_stat_names,
     uint32_t packets_to_read_to_connection_count_ratio,
@@ -102,7 +103,8 @@ ActiveQuicListener::ActiveQuicListener(
       per_worker_stats_, dispatcher, listen_socket_, quic_stat_names, crypto_server_stream_factory_,
       *connection_id_generator_, debug_visitor_factory,
       enable_session_idle_list ? std::make_unique<Http::SessionIdleList>(dispatcher) : nullptr,
-      std::move(connection_id_observer));
+      std::move(connection_id_observer),
+      established_socket ? established_socket.get() : nullptr);
 
   absl::AnyInvocable<void() &&> on_can_write_cb = [&]() { quic_dispatcher_->OnCanWrite(); };
 
@@ -143,6 +145,29 @@ ActiveQuicListener::ActiveQuicListener(
   max_sessions_per_event_loop_ =
       PROTOBUF_GET_WRAPPED_OR_DEFAULT(listener_config.udpListenerConfig()->config().quic_options(),
                                       max_sessions_per_event_loop, kNumSessionsToCreatePerLoop);
+
+  if (established_socket) {
+    established_socket_ = std::move(established_socket);
+    // Set up ECN reporting on the established socket, same as the listen socket.
+    if (established_socket_->connectionInfoProvider().localAddress()->ip() != nullptr) {
+      int optval = 1;
+      socklen_t optlen = sizeof(optval);
+      if (established_socket_->connectionInfoProvider().localAddress()->ip()->ipv6() != nullptr) {
+        established_socket_->setSocketOption(IPPROTO_IPV6, IPV6_RECVTCLASS, &optval, optlen);
+#ifndef __APPLE__
+        if (!established_socket_->connectionInfoProvider().localAddress()->ip()->ipv6()->v6only()) {
+          established_socket_->setSocketOption(IPPROTO_IP, IP_RECVTOS, &optval, optlen);
+        }
+#endif
+      } else {
+        established_socket_->setSocketOption(IPPROTO_IP, IP_RECVTOS, &optval, optlen);
+      }
+    }
+    // Create a second UDP listener so the event loop reads from both sockets.
+    established_udp_listener_ = std::make_unique<Network::UdpListenerImpl>(
+        dispatcher, established_socket_, *this, dispatcher.timeSource(),
+        listener_config.udpListenerConfig()->config().downstream_socket_config());
+  }
 }
 
 ActiveQuicListener::~ActiveQuicListener() { onListenerShutdown(); }
@@ -431,6 +456,15 @@ ActiveQuicListenerFactory::doFinalPreWorkerInit(Network::ListenSocketFactory& so
     }
   }
 
+  // Create per-worker established-connection sockets for stateful CID routing.
+  if (state.cid_generator_factory_->hasStatefulConnectionIdWorkerSelector()) {
+    for (uint32_t i = 0; i < concurrency_; i++) {
+      auto socket_or_error = socket_factory.createEbpfRoutedSocket();
+      RETURN_IF_NOT_OK_REF(socket_or_error.status());
+      state.established_sockets_.push_back(std::move(*socket_or_error));
+    }
+  }
+
   per_address_state_.emplace(addr_key, std::move(state));
   return absl::OkStatus();
 }
@@ -486,10 +520,17 @@ Network::ConnectionHandler::ActiveUdpListenerPtr ActiveQuicListenerFactory::crea
   }
 
   auto& per_addr = getOrCreatePerAddressState(*listen_socket_ptr);
+
+  Network::SocketSharedPtr established_socket;
+  if (worker_index < per_addr.established_sockets_.size()) {
+    established_socket = per_addr.established_sockets_[worker_index];
+  }
+
   per_addr.cid_generator_factory_->registerWorkerSocket(worker_index, *listen_socket_ptr);
 
   return createActiveQuicListener(
-      runtime, worker_index, concurrency_, dispatcher, parent, std::move(listen_socket_ptr), config,
+      runtime, worker_index, concurrency_, dispatcher, parent, std::move(listen_socket_ptr),
+      std::move(established_socket), config,
       quic_config_, per_addr.kernel_worker_routing_, enabled_, quic_stat_names_,
       packets_to_read_to_connection_count_ratio_, crypto_server_stream_factory_.value(),
       proof_source_factory_.value(),
@@ -501,7 +542,8 @@ Network::ConnectionHandler::ActiveUdpListenerPtr
 ActiveQuicListenerFactory::createActiveQuicListener(
     Runtime::Loader& runtime, uint32_t worker_index, uint32_t concurrency,
     Event::Dispatcher& dispatcher, Network::UdpConnectionHandler& parent,
-    Network::SocketSharedPtr&& listen_socket, Network::ListenerConfig& listener_config,
+    Network::SocketSharedPtr&& listen_socket, Network::SocketSharedPtr established_socket,
+    Network::ListenerConfig& listener_config,
     const quic::QuicConfig& quic_config, bool kernel_worker_routing,
     const envoy::config::core::v3::RuntimeFeatureFlag& enabled, QuicStatNames& quic_stat_names,
     uint32_t packets_to_read_to_connection_count_ratio,
@@ -520,6 +562,7 @@ ActiveQuicListenerFactory::createActiveQuicListener(
   }
   return std::make_unique<ActiveQuicListener>(
       runtime, worker_index, concurrency, dispatcher, parent, std::move(listen_socket),
+      std::move(established_socket),
       listener_config, quic_config, kernel_worker_routing, enabled, quic_stat_names,
       packets_to_read_to_connection_count_ratio, crypto_server_stream_factory, proof_source_factory,
       std::move(cid_generator), worker_selector,

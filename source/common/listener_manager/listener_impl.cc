@@ -243,6 +243,21 @@ absl::Status ListenSocketFactoryImpl::doFinalPreWorkerInit() {
   return absl::OkStatus();
 }
 
+absl::StatusOr<Network::SocketSharedPtr> ListenSocketFactoryImpl::createEbpfRoutedSocket() {
+  ASSERT(socket_type_ == Network::Socket::Type::Datagram);
+  auto socket = std::make_shared<Network::UdpListenSocket>(local_address_, options_, /*bind=*/true,
+                                                           socket_creation_options_);
+  if (options_ != nullptr) {
+    if (!Network::Socket::applyOptions(options_, *socket,
+                                       envoy::config::core::v3::SocketOption::STATE_BOUND)) {
+      return absl::InvalidArgumentError(
+          fmt::format("{}: Failed to apply socket options on eBPF-routed socket", listener_name_));
+    }
+    socket->addOptions(options_);
+  }
+  return socket;
+}
+
 constexpr absl::string_view StatsMatcherMetadataKey = "envoy.stats_matcher";
 
 namespace {

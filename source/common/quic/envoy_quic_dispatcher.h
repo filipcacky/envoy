@@ -70,7 +70,8 @@ public:
       quic::ConnectionIdGeneratorInterface& generator,
       EnvoyQuicConnectionDebugVisitorFactoryInterfaceOptRef debug_visitor_factory,
       std::unique_ptr<Http::SessionIdleList> session_idle_list,
-      QuicConnectionIdObserverPtr connection_id_observer);
+      QuicConnectionIdObserverPtr connection_id_observer,
+      Network::Socket* connection_id_observer_socket = nullptr);
 
   // quic::QuicDispatcher
   void OnConnectionClosed(quic::QuicConnectionId connection_id, quic::QuicErrorCode error,
@@ -126,6 +127,7 @@ private:
   // streams, and it is removed from this list when a new stream is created.
   std::unique_ptr<Http::SessionIdleListInterface> session_idle_list_;
   QuicConnectionIdObserverPtr connection_id_observer_;
+  Network::Socket* connection_id_observer_socket_{nullptr};
 };
 
 } // namespace Quic

@@ -61,7 +61,8 @@ EnvoyQuicDispatcher::EnvoyQuicDispatcher(
     quic::ConnectionIdGeneratorInterface& generator,
     EnvoyQuicConnectionDebugVisitorFactoryInterfaceOptRef debug_visitor_factory,
     std::unique_ptr<Http::SessionIdleList> session_idle_list,
-    QuicConnectionIdObserverPtr connection_id_observer)
+    QuicConnectionIdObserverPtr connection_id_observer,
+    Network::Socket* connection_id_observer_socket)
     : quic::QuicDispatcher(&quic_config, crypto_config, version_manager, std::move(helper),
                            std::make_unique<EnvoyQuicCryptoServerStreamHelper>(),
                            std::move(alarm_factory), expected_server_connection_id_length,
@@ -75,7 +76,8 @@ EnvoyQuicDispatcher::EnvoyQuicDispatcher(
           POOL_COUNTER_PREFIX(listener_config.listenerScope(), "quic.connection"))}),
       debug_visitor_factory_(debug_visitor_factory),
       session_idle_list_(std::move(session_idle_list)),
-      connection_id_observer_(std::move(connection_id_observer)) {}
+      connection_id_observer_(std::move(connection_id_observer)),
+      connection_id_observer_socket_(connection_id_observer_socket) {}
 
 void EnvoyQuicDispatcher::OnConnectionClosed(quic::QuicConnectionId connection_id,
                                              quic::QuicErrorCode error,
@@ -141,7 +143,9 @@ std::unique_ptr<quic::QuicSession> EnvoyQuicDispatcher::CreateQuicSession(
   // the original client DCID on first packet (SetOriginalDestinationConnectionId is called
   // after CreateQuicSession returns).
   if (connection_id_observer_) {
-    quic_connection->setConnectionIdObserver(connection_id_observer_.get(), listen_socket_);
+    Network::Socket& observer_socket =
+        connection_id_observer_socket_ ? *connection_id_observer_socket_ : listen_socket_;
+    quic_connection->setConnectionIdObserver(connection_id_observer_.get(), observer_socket);
   }
 
   auto quic_session = std::make_unique<EnvoyQuicServerSession>(
@@ -166,7 +170,9 @@ std::unique_ptr<quic::QuicSession> EnvoyQuicDispatcher::CreateQuicSession(
   }
   quic_session->Initialize();
   if (connection_id_observer_) {
-    connection_id_observer_->onConnectionIdIssued(server_connection_id, listen_socket_);
+    Network::Socket& observer_socket =
+        connection_id_observer_socket_ ? *connection_id_observer_socket_ : listen_socket_;
+    connection_id_observer_->onConnectionIdIssued(server_connection_id, observer_socket);
   }
   connection_handler_.incNumConnections();
   listener_stats_.downstream_cx_active_.inc();
