@@ -18,24 +18,31 @@ namespace ConnectionIdGenerator {
 namespace EpochStable {
 
 struct EpochStableConfig {
-  explicit EpochStableConfig(uint32_t max_map_entries) : max_map_entries(max_map_entries) {}
+  explicit EpochStableConfig(uint32_t max_map_entries, uint8_t active_map_index)
+      : max_map_entries(max_map_entries), active_map_index(active_map_index) {}
   // TODO(filipcacky): use envoy limits?
   uint32_t max_map_entries;
+
+  uint32_t active_map_index;
 };
 
-class EpochStableConnectionIdObserver : public QuicConnectionIdObserver {
+// This class modifies connection ids that are too long in an Envoy fashion.
+class EnvoyDeterministicConnectionIdGenerator : public quic::DeterministicConnectionIdGenerator {
 public:
-  EpochStableConnectionIdObserver(os_fd_t cid_map_fd, uint32_t concurrency);
+  EnvoyDeterministicConnectionIdGenerator(uint32_t connection_id_length, uint8_t map_index)
+      : quic::DeterministicConnectionIdGenerator(connection_id_length), map_index_(map_index) {}
 
-  void onConnectionIdIssued(const quic::QuicConnectionId& connection_id,
-                            const Network::Socket& socket) override;
-  void onConnectionIdRetired(const quic::QuicConnectionId& connection_id) override;
+  // Hashes |original| to create a new connection ID in Envoy fashion.
+  absl::optional<quic::QuicConnectionId>
+  GenerateNextConnectionId(const quic::QuicConnectionId& original) override;
+  // Replace the connection ID if and only if |original| is not of the expected
+  // length in Envoy fashion.
+  absl::optional<quic::QuicConnectionId>
+  MaybeReplaceConnectionId(const quic::QuicConnectionId& original,
+                           const quic::ParsedQuicVersion& version) override;
 
 private:
-  static uint64_t cidToKey(const quic::QuicConnectionId& cid);
-
-  const os_fd_t cid_map_fd_;
-  const uint32_t concurrency_;
+  uint8_t map_index_;
 };
 
 class Factory : public EnvoyQuicConnectionIdGeneratorFactory {
@@ -67,8 +74,9 @@ private:
 #if defined(__linux__)
   uint32_t concurrency_{0};
   std::atomic<uint32_t> registered_workers_{0};
-  os_fd_t cid_map_fd_{INVALID_SOCKET};
-  os_fd_t listen_map_fd_{INVALID_SOCKET};
+  os_fd_t map1_fd_{INVALID_SOCKET};
+  os_fd_t map2_fd_{INVALID_SOCKET};
+  os_fd_t active_map_fd_{INVALID_SOCKET};
   os_fd_t concurrency_fd_{INVALID_SOCKET};
 #endif
 };

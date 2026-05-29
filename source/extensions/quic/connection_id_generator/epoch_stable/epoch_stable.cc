@@ -15,61 +15,62 @@ namespace Quic {
 namespace Extensions {
 namespace ConnectionIdGenerator {
 namespace EpochStable {
+namespace {
 
-EpochStableConnectionIdObserver::EpochStableConnectionIdObserver(os_fd_t cid_map_fd,
-                                                                 uint32_t concurrency)
-    : cid_map_fd_(cid_map_fd), concurrency_(concurrency) {
-#if not defined(__linux__)
-  UNREFERENCED_PARAMETER(cid_map_fd_);
-  UNREFERENCED_PARAMETER(concurrency_);
-#endif
+// Modify new_connection_id according to given old_connection_id to make sure packets with the new
+// one can be routed to the same listener.
+void adjustNewConnectionIdForRouting(quic::QuicConnectionId& new_connection_id,
+                                     const quic::QuicConnectionId& old_connection_id) {
+  char* new_connection_id_data = new_connection_id.mutable_data();
+  const char* old_connection_id_ptr = old_connection_id.data();
+  // Override the first 4 bytes of the new CID to the original CID's first 4 bytes.
+  memcpy(new_connection_id_data, old_connection_id_ptr, 4); // NOLINT(safe-memcpy)
 }
 
-uint64_t EpochStableConnectionIdObserver::cidToKey(const quic::QuicConnectionId& cid) {
-  uint64_t key = 0;
-  size_t len = std::min<size_t>(cid.length(), sizeof(key));
-  memcpy(&key, cid.data(), len); // NOLINT(safe-memcpy)
-  return key;
-}
+} // namespace
 
-void EpochStableConnectionIdObserver::onConnectionIdIssued(
-    const quic::QuicConnectionId& connection_id, const Network::Socket& socket) {
-#if defined(__linux__)
-  uint64_t key = cidToKey(connection_id);
-  auto socket_fd = socket.ioHandle().fdDoNotUse();
-  int rc = bpf_map_update_elem(cid_map_fd_, &key, &socket_fd, BPF_ANY);
-  ENVOY_LOG_MISC(error, "epoch_stable: onConnectionCreated key={} fd={} rc={}: {}", key, socket_fd,
-                 rc, errorDetails(errno));
-#else
-  UNREFERENCED_PARAMETER(connection_id);
-  UNREFERENCED_PARAMETER(socket);
-#endif
-}
-
-void EpochStableConnectionIdObserver::onConnectionIdRetired(
-    const quic::QuicConnectionId& connection_id) {
-#if defined(__linux__)
-  uint64_t key = cidToKey(connection_id);
-  if (key < concurrency_) {
-    return;
+absl::optional<quic::QuicConnectionId>
+EnvoyDeterministicConnectionIdGenerator::GenerateNextConnectionId(
+    const quic::QuicConnectionId& original) {
+  auto new_cid = DeterministicConnectionIdGenerator::GenerateNextConnectionId(original);
+  if (!new_cid.has_value()) {
+    return absl::nullopt;
   }
-  int rc = bpf_map_delete_elem(cid_map_fd_, &key);
-  ENVOY_LOG_MISC(error, "epoch_stable: onConnectionClosed key={} rc={} errno={}", key, rc,
-                 errorDetails(errno));
-#else
-  UNREFERENCED_PARAMETER(connection_id);
-#endif
+  adjustNewConnectionIdForRouting(new_cid.value(), original);
+  if (new_cid.value() == original) {
+    return absl::nullopt;
+  }
+  new_cid->mutable_data()[quic::kQuicDefaultConnectionIdLength] = static_cast<char>(map_index_);
+  return new_cid;
+}
+
+absl::optional<quic::QuicConnectionId>
+EnvoyDeterministicConnectionIdGenerator::MaybeReplaceConnectionId(
+    const quic::QuicConnectionId& original, const quic::ParsedQuicVersion& version) {
+  auto new_cid = DeterministicConnectionIdGenerator::MaybeReplaceConnectionId(original, version);
+  if (!new_cid.has_value()) {
+    return absl::nullopt;
+  }
+  adjustNewConnectionIdForRouting(new_cid.value(), original);
+  if (new_cid.value() == original) {
+    return absl::nullopt;
+  }
+  new_cid->mutable_data()[quic::kQuicDefaultConnectionIdLength] = static_cast<char>(map_index_);
+  return new_cid;
 }
 
 Factory::Factory(const EpochStableConfig& config) : config_(config) {}
 
 Factory::~Factory() {
 #if defined(__linux__)
-  if (cid_map_fd_ >= 0) {
-    close(cid_map_fd_);
+  if (map1_fd_ >= 0) {
+    close(map1_fd_);
   }
-  if (listen_map_fd_ >= 0) {
-    close(listen_map_fd_);
+  if (map2_fd_ >= 0) {
+    close(map2_fd_);
+  }
+  if (active_map_fd_ >= 0) {
+    close(active_map_fd_);
   }
   if (concurrency_fd_ >= 0) {
     close(concurrency_fd_);
@@ -109,10 +110,12 @@ absl::Status Factory::loadMaps(os_fd_t prog_fd) {
       return cleanupAndError("failed to query map info");
     }
 
-    if (strcmp(map_info.name, "listen_map") == 0) {
-      listen_map_fd_ = map_fd;
-    } else if (strcmp(map_info.name, "cid_map") == 0) {
-      cid_map_fd_ = map_fd;
+    if (strcmp(map_info.name, "map1") == 0) {
+      map1_fd_ = map_fd;
+    } else if (strcmp(map_info.name, "map2") == 0) {
+      map2_fd_ = map_fd;
+    } else if (strcmp(map_info.name, "active_map") == 0) {
+      active_map_fd_ = map_fd;
     } else if (strcmp(map_info.name, "concurrency") == 0) {
       concurrency_fd_ = map_fd;
     } else {
@@ -120,7 +123,7 @@ absl::Status Factory::loadMaps(os_fd_t prog_fd) {
     }
   }
 
-  if (cid_map_fd_ < 0 || listen_map_fd_ < 0 || concurrency_fd_ < 0) {
+  if (map1_fd_ < 0 || map2_fd_ < 0 || active_map_fd_ < 0 || concurrency_fd_ < 0) {
     return cleanupAndError("program missing required maps");
   }
 
@@ -133,8 +136,8 @@ absl::Status Factory::loadMaps(os_fd_t prog_fd) {
 }
 
 QuicConnectionIdGeneratorPtr Factory::createQuicConnectionIdGenerator(uint32_t) {
-  return std::make_unique<quic::DeterministicConnectionIdGenerator>(
-      quic::kQuicDefaultConnectionIdLength);
+  return std::make_unique<EnvoyDeterministicConnectionIdGenerator>(
+      quic::kQuicDefaultConnectionIdLength + 1, config_.active_map_index);
 }
 
 absl::StatusOr<Network::Socket::OptionConstSharedPtr>
@@ -152,8 +155,8 @@ Factory::createCompatibleLinuxBpfSocketOption(uint32_t concurrency, os_fd_t prog
 
   RETURN_IF_NOT_OK(loadBpfProgram());
 
-  ENVOY_LOG_MISC(info, "epoch_stable: prog_fd={} cid_map_fd={} listen_map_fd={} concurrency_fd={}",
-                 prog_fd_, cid_map_fd_, listen_map_fd_, concurrency_fd_);
+  ENVOY_LOG_MISC(info, "epoch_stable: prog_fd={} map1={} map2={} active_map={} concurrency_fd={}",
+                 prog_fd_, map1_fd_, map2_fd_, active_map_fd_, concurrency_fd_);
 
   return std::make_shared<Network::SocketOptionImpl>(
       envoy::config::core::v3::SocketOption::STATE_BOUND, ENVOY_ATTACH_REUSEPORT_EBPF, prog_fd_);
@@ -172,12 +175,21 @@ absl::Status Factory::loadBpfProgram() {
     return absl::InternalError(fmt::format("bpf_object__open_mem: {}", errorDetails(errno)));
   }
 
-  struct bpf_map* cid_map = bpf_object__find_map_by_name(bpf_obj, "cid_map");
-  if (cid_map == nullptr) {
-    return cleanupAndError("cid_map not found in BPF object");
+  struct bpf_map* map1 = bpf_object__find_map_by_name(bpf_obj, "map1");
+  if (map1 == nullptr) {
+    return cleanupAndError("map1 not found in BPF object");
   }
 
-  if (bpf_map__set_max_entries(cid_map, config_.max_map_entries) < 0) {
+  if (bpf_map__set_max_entries(map1, config_.max_map_entries) < 0) {
+    return cleanupAndError(fmt::format("bpf_map__set_max_entries: {}", errorDetails(errno)));
+  }
+
+  struct bpf_map* map2 = bpf_object__find_map_by_name(bpf_obj, "map2");
+  if (map2 == nullptr) {
+    return cleanupAndError("map2 not found in BPF object");
+  }
+
+  if (bpf_map__set_max_entries(map2, config_.max_map_entries) < 0) {
     return cleanupAndError(fmt::format("bpf_map__set_max_entries: {}", errorDetails(errno)));
   }
 
@@ -196,11 +208,12 @@ absl::Status Factory::loadBpfProgram() {
     return cleanupAndError("failed to get program fd");
   }
 
-  cid_map_fd_ = bpf_map__fd(bpf_object__find_map_by_name(bpf_obj, "cid_map"));
-  listen_map_fd_ = bpf_map__fd(bpf_object__find_map_by_name(bpf_obj, "listen_map"));
+  map1_fd_ = bpf_map__fd(bpf_object__find_map_by_name(bpf_obj, "map1"));
+  map2_fd_ = bpf_map__fd(bpf_object__find_map_by_name(bpf_obj, "map2"));
+  active_map_fd_ = bpf_map__fd(bpf_object__find_map_by_name(bpf_obj, "active_map"));
   concurrency_fd_ = bpf_map__fd(bpf_object__find_map_by_name(bpf_obj, "concurrency"));
 
-  if (listen_map_fd_ < 0 || cid_map_fd_ < 0 || concurrency_fd_ < 0) {
+  if (map1_fd_ < 0 || map2_fd_ < 0 || active_map_fd_ < 0 || concurrency_fd_ < 0) {
     return cleanupAndError("failed to get map fds");
   }
 
@@ -212,13 +225,17 @@ absl::Status Factory::loadBpfProgram() {
 
 absl::Status Factory::cleanupAndError(absl::string_view message) {
 #if defined(__linux__)
-  if (cid_map_fd_ >= 0) {
-    close(cid_map_fd_);
-    cid_map_fd_ = INVALID_SOCKET;
+  if (map1_fd_ >= 0) {
+    close(map1_fd_);
+    map1_fd_ = INVALID_SOCKET;
   }
-  if (listen_map_fd_ >= 0) {
-    close(listen_map_fd_);
-    listen_map_fd_ = INVALID_SOCKET;
+  if (map2_fd_ >= 0) {
+    close(map2_fd_);
+    map2_fd_ = INVALID_SOCKET;
+  }
+  if (active_map_fd_ >= 0) {
+    close(active_map_fd_);
+    active_map_fd_ = INVALID_SOCKET;
   }
   if (concurrency_fd_ >= 0) {
     close(concurrency_fd_);
@@ -237,12 +254,11 @@ absl::Status Factory::cleanupAndError(absl::string_view message) {
 
 void Factory::registerWorkerSocket(uint32_t worker_index, const Network::Socket& socket) {
 #if defined(__linux__)
-  if (listen_map_fd_ == INVALID_SOCKET) {
-    return;
-  }
+  auto map = config_.active_map_index == 0 ? map1_fd_ : map2_fd_;
+
   uint32_t key = worker_index;
   os_fd_t fd = socket.ioHandle().fdDoNotUse();
-  if (bpf_map_update_elem(listen_map_fd_, &key, &fd, BPF_ANY) < 0) {
+  if (bpf_map_update_elem(map, &key, &fd, BPF_ANY) < 0) {
     ENVOY_LOG_MISC(error, "epoch_stable: registerWorkerSocket worker={} fd={} failed: {}",
                    worker_index, fd, errorDetails(errno));
     return;
@@ -250,11 +266,12 @@ void Factory::registerWorkerSocket(uint32_t worker_index, const Network::Socket&
     ENVOY_LOG_MISC(error, "epoch_stable: registerWorkerSocket worker={} fd={}", worker_index, fd);
   }
 
-  uint32_t registered = registered_workers_.fetch_add(1) + 1;
-  if (registered == concurrency_) {
+  if (registered_workers_.fetch_add(1) + 1 == concurrency_) {
     uint32_t zero = 0;
     bpf_map_update_elem(concurrency_fd_, &zero, &concurrency_, BPF_ANY);
-    ENVOY_LOG_MISC(error, "epoch_stable: all {} workers registered, concurrency set", concurrency_);
+    bpf_map_update_elem(active_map_fd_, &zero, &config_.active_map_index, BPF_ANY);
+    ENVOY_LOG_MISC(error, "epoch_stable: all {} workers registered, concurrency set, active_map {}",
+                   concurrency_, config_.active_map_index);
   }
 #else
   UNREFERENCED_PARAMETER(worker_index);
@@ -267,16 +284,7 @@ QuicConnectionIdWorkerSelector Factory::getCompatibleConnectionIdWorkerSelector(
   return [](const Buffer::Instance&, uint32_t default_value) { return default_value; };
 }
 
-QuicConnectionIdObserverPtr Factory::createConnectionIdObserver() {
-#if defined(__linux__)
-  if (cid_map_fd_ == INVALID_SOCKET) {
-    return nullptr;
-  }
-  return std::make_unique<EpochStableConnectionIdObserver>(cid_map_fd_, concurrency_);
-#else
-  return nullptr;
-#endif
-}
+QuicConnectionIdObserverPtr Factory::createConnectionIdObserver() { return nullptr; }
 
 } // namespace EpochStable
 } // namespace ConnectionIdGenerator

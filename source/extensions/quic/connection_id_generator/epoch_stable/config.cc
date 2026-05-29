@@ -17,15 +17,16 @@ ProtobufTypes::MessagePtr ConfigFactory::createEmptyConfigProto() {
 }
 
 EnvoyQuicConnectionIdGeneratorFactoryPtr ConfigFactory::createQuicConnectionIdGeneratorFactory(
-    const Protobuf::Message& config, ProtobufMessage::ValidationVisitor& validation_visitor,
-    Server::Configuration::FactoryContext&) {
-  const auto& proto = MessageUtil::downcastAndValidate<
+    const Protobuf::Message& proto_message, ProtobufMessage::ValidationVisitor& validation_visitor,
+    Server::Configuration::FactoryContext& context) {
+  const auto& proto_config = MessageUtil::downcastAndValidate<
       const envoy::extensions::quic::connection_id_generator::epoch_stable::v3::Config&>(
-      config, validation_visitor);
+      proto_message, validation_visitor);
 
-  EpochStableConfig epoch_config(PROTOBUF_GET_WRAPPED_OR_DEFAULT(proto, max_map_entries, 65536));
+  EpochStableConfig config(PROTOBUF_GET_WRAPPED_OR_DEFAULT(proto_config, max_map_entries, 65536),
+                           context.serverFactoryContext().options().restartEpoch() % 2);
 
-  auto factory_or_status = Factory::create(epoch_config);
+  auto factory_or_status = Factory::create(config);
   THROW_IF_NOT_OK_REF(factory_or_status.status());
   return std::move(factory_or_status.value());
 }
