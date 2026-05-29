@@ -76,19 +76,16 @@ protected:
   Network::ConnectionHandler::ActiveUdpListenerPtr createActiveQuicListener(
       Runtime::Loader& runtime, uint32_t worker_index, uint32_t concurrency,
       Event::Dispatcher& dispatcher, Network::UdpConnectionHandler& parent,
-      Network::SocketSharedPtr&& listen_socket, Network::SocketSharedPtr established_socket,
-      Network::ListenerConfig& listener_config,
+      Network::SocketSharedPtr&& listen_socket, Network::ListenerConfig& listener_config,
       const quic::QuicConfig& quic_config, bool kernel_worker_routing,
       const envoy::config::core::v3::RuntimeFeatureFlag& enabled, QuicStatNames& quic_stat_names,
       uint32_t packets_to_read_to_connection_count_ratio,
       EnvoyQuicCryptoServerStreamFactoryInterface& crypto_server_stream_factory,
       EnvoyQuicProofSourceFactoryInterface& proof_source_factory,
       QuicConnectionIdGeneratorPtr&& cid_generator,
-      QuicConnectionIdObserverPtr connection_id_observer,
-      QuicConnectionIdWorkerSelector /*worker_selector*/) override {
+      QuicConnectionIdObserverPtr connection_id_observer) override {
     return std::make_unique<TestActiveQuicListener>(
         runtime, worker_index, concurrency, dispatcher, parent, std::move(listen_socket),
-        std::move(established_socket),
         listener_config, quic_config, kernel_worker_routing, enabled, quic_stat_names,
         packets_to_read_to_connection_count_ratio, crypto_server_stream_factory,
         proof_source_factory, std::move(cid_generator), testWorkerSelector, std::nullopt,

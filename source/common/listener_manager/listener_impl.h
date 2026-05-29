@@ -85,7 +85,6 @@ public:
     }
   }
   absl::Status doFinalPreWorkerInit() override;
-  absl::StatusOr<Network::SocketSharedPtr> createEbpfRoutedSocket() override;
 
 private:
   ListenSocketFactoryImpl(ListenerComponentFactory& factory,

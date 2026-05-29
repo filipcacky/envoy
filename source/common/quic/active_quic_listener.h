@@ -32,7 +32,6 @@ public:
   ActiveQuicListener(Runtime::Loader& runtime, uint32_t worker_index, uint32_t concurrency,
                      Event::Dispatcher& dispatcher, Network::UdpConnectionHandler& parent,
                      Network::SocketSharedPtr&& listen_socket,
-                     Network::SocketSharedPtr established_socket,
                      Network::ListenerConfig& listener_config, const quic::QuicConfig& quic_config,
                      bool kernel_worker_routing,
                      const envoy::config::core::v3::RuntimeFeatureFlag& enabled,
@@ -110,10 +109,6 @@ private:
   // This is an equivalent of max_connections_to_accept_per_socket_event for TCP
   // listeners.
   uint32_t max_sessions_per_event_loop_;
-  // Separate socket for established connections. BPF routes packets with known CIDs here,
-  // while the listen socket receives new connections. Stable across epochs.
-  Network::SocketSharedPtr established_socket_;
-  Network::UdpListenerPtr established_udp_listener_;
 };
 
 using ActiveQuicListenerPtr = std::unique_ptr<ActiveQuicListener>;
@@ -149,8 +144,7 @@ protected:
   virtual Network::ConnectionHandler::ActiveUdpListenerPtr createActiveQuicListener(
       Runtime::Loader& runtime, uint32_t worker_index, uint32_t concurrency,
       Event::Dispatcher& dispatcher, Network::UdpConnectionHandler& parent,
-      Network::SocketSharedPtr&& listen_socket, Network::SocketSharedPtr established_socket,
-      Network::ListenerConfig& listener_config,
+      Network::SocketSharedPtr&& listen_socket, Network::ListenerConfig& listener_config,
       const quic::QuicConfig& quic_config, bool kernel_worker_routing,
       const envoy::config::core::v3::RuntimeFeatureFlag& enabled, QuicStatNames& quic_stat_names,
       uint32_t packets_to_read_to_connection_count_ratio,
@@ -166,8 +160,6 @@ protected:
     EnvoyQuicConnectionIdGeneratorFactoryPtr cid_generator_factory_;
     QuicConnectionIdWorkerSelector worker_selector_;
     bool kernel_worker_routing_{};
-    // Per-worker sockets for established connections, created in doFinalPreWorkerInit.
-    std::vector<Network::SocketSharedPtr> established_sockets_;
   };
 
   PerAddressState& getOrCreatePerAddressState(const Network::Socket& socket);
