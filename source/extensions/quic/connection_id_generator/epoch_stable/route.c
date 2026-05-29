@@ -11,7 +11,7 @@
 char _license[] SEC("license") = "Apache-2";
 
 struct {
-  __uint(type, BPF_MAP_TYPE_SOCKHASH);
+  __uint(type, BPF_MAP_TYPE_SOCKMAP);
   __uint(key_size, sizeof(__u32));
   __uint(value_size, sizeof(__u32));
   __uint(max_entries, 65536);
