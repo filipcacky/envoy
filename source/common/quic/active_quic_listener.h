@@ -42,7 +42,6 @@ public:
                      QuicConnectionIdGeneratorPtr&& cid_generator,
                      QuicConnectionIdWorkerSelector worker_selector,
                      EnvoyQuicConnectionDebugVisitorFactoryInterfaceOptRef debug_visitor_factory,
-                     QuicConnectionIdObserverPtr connection_id_observer,
                      bool reject_new_connections = false, bool enable_session_idle_list = false);
 
   ~ActiveQuicListener() override;
@@ -151,7 +150,6 @@ protected:
       EnvoyQuicCryptoServerStreamFactoryInterface& crypto_server_stream_factory,
       EnvoyQuicProofSourceFactoryInterface& proof_source_factory,
       QuicConnectionIdGeneratorPtr&& cid_generator,
-      QuicConnectionIdObserverPtr connection_id_observer,
       QuicConnectionIdWorkerSelector worker_selector);
 
   // Per-address state for CID generation and BPF routing.

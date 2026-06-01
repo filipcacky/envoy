@@ -43,8 +43,7 @@ ActiveQuicListener::ActiveQuicListener(
     EnvoyQuicProofSourceFactoryInterface& proof_source_factory,
     QuicConnectionIdGeneratorPtr&& cid_generator, QuicConnectionIdWorkerSelector worker_selector,
     EnvoyQuicConnectionDebugVisitorFactoryInterfaceOptRef debug_visitor_factory,
-    QuicConnectionIdObserverPtr connection_id_observer, bool reject_new_connections,
-    bool enable_session_idle_list)
+    bool reject_new_connections, bool enable_session_idle_list)
     : Server::ActiveUdpListenerBase(
           worker_index, concurrency, parent, *listen_socket,
           std::make_unique<Network::UdpListenerImpl>(
@@ -101,8 +100,7 @@ ActiveQuicListener::ActiveQuicListener(
       std::move(alarm_factory), quic::kQuicDefaultConnectionIdLength, parent, *config_, stats_,
       per_worker_stats_, dispatcher, listen_socket_, quic_stat_names, crypto_server_stream_factory_,
       *connection_id_generator_, debug_visitor_factory,
-      enable_session_idle_list ? std::make_unique<Http::SessionIdleList>(dispatcher) : nullptr,
-      std::move(connection_id_observer));
+      enable_session_idle_list ? std::make_unique<Http::SessionIdleList>(dispatcher) : nullptr);
 
   absl::AnyInvocable<void() &&> on_can_write_cb = [&]() { quic_dispatcher_->OnCanWrite(); };
 
@@ -494,9 +492,8 @@ Network::ConnectionHandler::ActiveUdpListenerPtr ActiveQuicListenerFactory::crea
       packets_to_read_to_connection_count_ratio_, crypto_server_stream_factory_.value(),
       proof_source_factory_.value(),
       per_addr.cid_generator_factory_->createQuicConnectionIdGenerator(worker_index),
-      per_addr.cid_generator_factory_->createConnectionIdObserver(), per_addr.worker_selector_);
+      per_addr.worker_selector_);
 }
-
 Network::ConnectionHandler::ActiveUdpListenerPtr
 ActiveQuicListenerFactory::createActiveQuicListener(
     Runtime::Loader& runtime, uint32_t worker_index, uint32_t concurrency,
@@ -507,9 +504,7 @@ ActiveQuicListenerFactory::createActiveQuicListener(
     uint32_t packets_to_read_to_connection_count_ratio,
     EnvoyQuicCryptoServerStreamFactoryInterface& crypto_server_stream_factory,
     EnvoyQuicProofSourceFactoryInterface& proof_source_factory,
-    QuicConnectionIdGeneratorPtr&& cid_generator,
-    QuicConnectionIdObserverPtr connection_id_observer,
-    QuicConnectionIdWorkerSelector worker_selector) {
+    QuicConnectionIdGeneratorPtr&& cid_generator, QuicConnectionIdWorkerSelector worker_selector) {
   bool enable_session_idle_list = false;
   for (const auto& action :
        context_.serverFactoryContext().bootstrap().overload_manager().actions()) {
@@ -523,8 +518,8 @@ ActiveQuicListenerFactory::createActiveQuicListener(
       listener_config, quic_config, kernel_worker_routing, enabled, quic_stat_names,
       packets_to_read_to_connection_count_ratio, crypto_server_stream_factory, proof_source_factory,
       std::move(cid_generator), worker_selector,
-      makeOptRefFromPtr(connection_debug_visitor_factory_.get()), std::move(connection_id_observer),
-      reject_new_connections_, enable_session_idle_list);
+      makeOptRefFromPtr(connection_debug_visitor_factory_.get()), reject_new_connections_,
+      enable_session_idle_list);
 }
 
 } // namespace Quic

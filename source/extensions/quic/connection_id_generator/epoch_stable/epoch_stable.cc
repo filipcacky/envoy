@@ -284,8 +284,6 @@ QuicConnectionIdWorkerSelector Factory::getCompatibleConnectionIdWorkerSelector(
   return [](const Buffer::Instance&, uint32_t default_value) { return default_value; };
 }
 
-QuicConnectionIdObserverPtr Factory::createConnectionIdObserver() { return nullptr; }
-
 } // namespace EpochStable
 } // namespace ConnectionIdGenerator
 } // namespace Extensions

@@ -86,16 +86,6 @@ void EnvoyQuicServerConnection::ProcessUdpPacket(const quic::QuicSocketAddress& 
     if (listener_filter_manager_ != nullptr) {
       listener_filter_manager_->onFirstPacketReceived(packet);
     }
-    // Register the original client DCID with the CID observer. This must happen here
-    // because SetOriginalDestinationConnectionId is called by QuicDispatcher::CreateSessionFromChlo
-    // after CreateQuicSession returns, so the original DCID is not available during session creation.
-    if (connection_id_observer_ && connection_id_observer_socket_) {
-      const auto original_dcid = GetOriginalDestinationConnectionId();
-      if (original_dcid != connection_id()) {
-        connection_id_observer_->onConnectionIdIssued(original_dcid,
-                                                      *connection_id_observer_socket_);
-      }
-    }
     first_packet_received_ = true;
   }
 

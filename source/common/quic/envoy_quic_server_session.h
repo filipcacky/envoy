@@ -5,7 +5,6 @@
 
 #include "source/common/http/session_idle_list_interface.h"
 #include "source/common/quic/envoy_quic_connection_debug_visitor_factory_interface.h"
-#include "source/common/quic/envoy_quic_connection_id_generator_factory.h"
 #include "source/common/quic/envoy_quic_server_connection.h"
 #include "source/common/quic/envoy_quic_server_crypto_stream_factory.h"
 #include "source/common/quic/envoy_quic_server_stream.h"
@@ -129,10 +128,6 @@ public:
   // IdleSessionInterface
   // NOLINTNEXTLINE(readability-identifier-naming)
   void TerminateIdleSession() override;
-
-  // quic::QuicSession
-  void SendNewConnectionId(const quic::QuicNewConnectionIdFrame& frame) override;
-  void OnServerConnectionIdRetired(const quic::QuicConnectionId& server_connection_id) override;
 
   using quic::QuicSession::PerformActionOnActiveStreams;
 

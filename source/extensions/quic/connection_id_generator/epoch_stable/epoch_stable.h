@@ -56,7 +56,6 @@ public:
   createCompatibleLinuxBpfSocketOption(uint32_t concurrency, os_fd_t prog_fd) override;
   QuicConnectionIdWorkerSelector
   getCompatibleConnectionIdWorkerSelector(uint32_t concurrency) override;
-  QuicConnectionIdObserverPtr createConnectionIdObserver() override;
   bool hasStatefulConnectionIdWorkerSelector() const override { return true; }
   os_fd_t bpfProgFd() const override { return prog_fd_; }
   void registerWorkerSocket(uint32_t worker_index, const Network::Socket& socket) override;
