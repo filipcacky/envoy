@@ -64,13 +64,13 @@ Factory::Factory(const EpochStableConfig& config) : config_(config) {}
 
 Factory::~Factory() {
 #if defined(__linux__)
-  if (generations_fd_ >= 0) {
+  if (SOCKET_VALID(generations_fd_)) {
     close(generations_fd_);
   }
-  if (routing_fd_ >= 0) {
+  if (SOCKET_VALID(routing_fd_)) {
     close(routing_fd_);
   }
-  if (prog_fd_ >= 0) {
+  if (SOCKET_VALID(prog_fd_)) {
     close(prog_fd_);
   }
 #endif
@@ -241,15 +241,15 @@ absl::Status Factory::loadBpfProgram() {
 
 absl::Status Factory::cleanupAndError(absl::string_view message) {
 #if defined(__linux__)
-  if (generations_fd_ >= 0) {
+  if (SOCKET_VALID(generations_fd_)) {
     close(generations_fd_);
     generations_fd_ = INVALID_SOCKET;
   }
-  if (routing_fd_ >= 0) {
+  if (SOCKET_VALID(routing_fd_)) {
     close(routing_fd_);
     routing_fd_ = INVALID_SOCKET;
   }
-  if (prog_fd_ >= 0) {
+  if (SOCKET_VALID(prog_fd_)) {
     close(prog_fd_);
     prog_fd_ = INVALID_SOCKET;
   }
