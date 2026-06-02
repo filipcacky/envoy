@@ -160,7 +160,7 @@ protected:
     bool kernel_worker_routing_{};
   };
 
-  PerAddressState& getOrCreatePerAddressState(const Network::Socket& socket);
+  PerAddressState& getPerAddressState(const Network::Socket& socket);
 
 private:
   friend class ActiveQuicListenerFactoryPeer;

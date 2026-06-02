@@ -450,7 +450,7 @@ ActiveQuicListenerFactory::doFinalPreWorkerInit(Network::ListenSocketFactory& so
 }
 
 ActiveQuicListenerFactory::PerAddressState&
-ActiveQuicListenerFactory::getOrCreatePerAddressState(const Network::Socket& socket) {
+ActiveQuicListenerFactory::getPerAddressState(const Network::Socket& socket) {
   const std::string addr_key = socket.connectionInfoProvider().localAddress()->asString();
   auto it = per_address_state_.find(addr_key);
   RELEASE_ASSERT(
@@ -499,7 +499,7 @@ Network::ConnectionHandler::ActiveUdpListenerPtr ActiveQuicListenerFactory::crea
     }
   }
 
-  auto& per_addr = getOrCreatePerAddressState(*listen_socket_ptr);
+  auto& per_addr = getPerAddressState(*listen_socket_ptr);
   per_addr.cid_generator_factory_->registerWorkerSocket(worker_index, *listen_socket_ptr);
 
   return createActiveQuicListener(
