@@ -14,11 +14,12 @@ genrule(
     name = "route_bpf_obj",
     srcs = [
         "route.c",
+        "routing_config.h",
         "@libbpf//:all",
     ],
     outs = ["route.bpf.o"],
     cmd = "LIBBPF_SRC=$$(dirname $$(echo $(locations @libbpf//:all) | tr ' ' '\\n' | grep 'src/bpf_helpers.h'))/.. && " +
-          "clang -target bpf -O2 -g -isystem /usr/include/$$(uname -m)-linux-gnu -I$$LIBBPF_SRC/src -I$$LIBBPF_SRC/include/uapi -c $(location route.c) -o $@",
+          "clang -target bpf -O2 -g -isystem /usr/include/$$(uname -m)-linux-gnu -I$$(dirname $(location route.c)) -I$$LIBBPF_SRC/src -I$$LIBBPF_SRC/include/uapi -c $(location route.c) -o $@",
     target_compatible_with = ["@platforms//os:linux"],
 )
 
@@ -34,7 +35,10 @@ envoy_cc_library(
     name = "epoch_stable_lib",
     srcs = envoy_select_enable_http3(["epoch_stable.cc"]),
     hdrs = envoy_select_enable_http3(["epoch_stable.h"]) + select({
-        "//bazel:linux": ["route_bpf_embedded.h"],
+        "//bazel:linux": [
+            "route_bpf_embedded.h",
+            "routing_config.h",
+        ],
         "//conditions:default": [],
     }),
     tags = ["skip_on_windows"],

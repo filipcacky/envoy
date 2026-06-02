@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 
 #include "source/extensions/quic/connection_id_generator/epoch_stable/route_bpf_embedded.h"
+#include "source/extensions/quic/connection_id_generator/epoch_stable/routing_config.h"
 #endif
 
 namespace Envoy {
@@ -17,13 +18,13 @@ namespace ConnectionIdGenerator {
 namespace EpochStable {
 namespace {
 
-// Modify new_connection_id according to given old_connection_id to make sure packets with the new
-// one can be routed to the same listener.
+constexpr size_t kGenByteOffset = quic::kQuicDefaultConnectionIdLength;
+constexpr uint32_t kCidLength = quic::kQuicDefaultConnectionIdLength + 1;
+
 void adjustNewConnectionIdForRouting(quic::QuicConnectionId& new_connection_id,
                                      const quic::QuicConnectionId& old_connection_id) {
   char* new_connection_id_data = new_connection_id.mutable_data();
   const char* old_connection_id_ptr = old_connection_id.data();
-  // Override the first 4 bytes of the new CID to the original CID's first 4 bytes.
   memcpy(new_connection_id_data, old_connection_id_ptr, 4); // NOLINT(safe-memcpy)
 }
 
@@ -40,7 +41,7 @@ EnvoyDeterministicConnectionIdGenerator::GenerateNextConnectionId(
   if (new_cid.value() == original) {
     return absl::nullopt;
   }
-  new_cid->mutable_data()[quic::kQuicDefaultConnectionIdLength] = static_cast<char>(map_index_);
+  new_cid->mutable_data()[kGenByteOffset] = static_cast<char>(generation_);
   return new_cid;
 }
 
@@ -55,7 +56,7 @@ EnvoyDeterministicConnectionIdGenerator::MaybeReplaceConnectionId(
   if (new_cid.value() == original) {
     return absl::nullopt;
   }
-  new_cid->mutable_data()[quic::kQuicDefaultConnectionIdLength] = static_cast<char>(map_index_);
+  new_cid->mutable_data()[kGenByteOffset] = static_cast<char>(generation_);
   return new_cid;
 }
 
@@ -63,17 +64,11 @@ Factory::Factory(const EpochStableConfig& config) : config_(config) {}
 
 Factory::~Factory() {
 #if defined(__linux__)
-  if (map1_fd_ >= 0) {
-    close(map1_fd_);
+  if (generations_fd_ >= 0) {
+    close(generations_fd_);
   }
-  if (map2_fd_ >= 0) {
-    close(map2_fd_);
-  }
-  if (active_map_fd_ >= 0) {
-    close(active_map_fd_);
-  }
-  if (concurrency_fd_ >= 0) {
-    close(concurrency_fd_);
+  if (routing_fd_ >= 0) {
+    close(routing_fd_);
   }
   if (prog_fd_ >= 0) {
     close(prog_fd_);
@@ -89,7 +84,7 @@ absl::Status Factory::loadMaps(os_fd_t prog_fd) {
 #if defined(__linux__)
   bpf_prog_info info{};
   __u32 info_len = sizeof(info);
-  std::array<uint32_t, 8> map_ids{};
+  std::array<uint32_t, 16> map_ids{};
   info.nr_map_ids = map_ids.size();
   info.map_ids = reinterpret_cast<__u64>(map_ids.data());
 
@@ -107,24 +102,24 @@ absl::Status Factory::loadMaps(os_fd_t prog_fd) {
     bpf_map_info map_info{};
     __u32 map_info_len = sizeof(map_info);
     if (bpf_map_get_info_by_fd(map_fd, &map_info, &map_info_len) < 0) {
-      return cleanupAndError("failed to query map info");
+      return cleanupAndError(fmt::format("failed to query map info: {}", errorDetails(errno)));
     }
 
-    if (strcmp(map_info.name, "map1") == 0) {
-      map1_fd_ = map_fd;
-    } else if (strcmp(map_info.name, "map2") == 0) {
-      map2_fd_ = map_fd;
-    } else if (strcmp(map_info.name, "active_map") == 0) {
-      active_map_fd_ = map_fd;
-    } else if (strcmp(map_info.name, "concurrency") == 0) {
-      concurrency_fd_ = map_fd;
+    if (strcmp(map_info.name, "generations") == 0) {
+      generations_fd_ = map_fd;
+      num_generations_ = map_info.max_entries;
+    } else if (strcmp(map_info.name, "routing") == 0) {
+      routing_fd_ = map_fd;
     } else {
       close(map_fd);
     }
   }
 
-  if (map1_fd_ < 0 || map2_fd_ < 0 || active_map_fd_ < 0 || concurrency_fd_ < 0) {
+  if (generations_fd_ < 0 || routing_fd_ < 0) {
     return cleanupAndError("program missing required maps");
+  }
+  if (num_generations_ == 0) {
+    return cleanupAndError("generations map has zero max_entries");
   }
 
   return absl::OkStatus();
@@ -136,8 +131,7 @@ absl::Status Factory::loadMaps(os_fd_t prog_fd) {
 }
 
 QuicConnectionIdGeneratorPtr Factory::createQuicConnectionIdGenerator(uint32_t) {
-  return std::make_unique<EnvoyDeterministicConnectionIdGenerator>(
-      quic::kQuicDefaultConnectionIdLength + 1, config_.active_map_index);
+  return std::make_unique<EnvoyDeterministicConnectionIdGenerator>(kCidLength, current_generation_);
 }
 
 absl::StatusOr<Network::Socket::OptionConstSharedPtr>
@@ -145,18 +139,21 @@ Factory::createCompatibleLinuxBpfSocketOption(uint32_t concurrency, os_fd_t prog
 #if defined(SO_ATTACH_REUSEPORT_EBPF) && defined(__linux__)
   concurrency_ = concurrency;
 
-  prog_fd_ = prog_fd;
-  if (prog_fd_ != INVALID_SOCKET) {
-    const auto maps_status = loadMaps(prog_fd_);
-    RETURN_IF_NOT_OK_REF(maps_status);
-    ENVOY_LOG_MISC(error, "loaded maps");
+  if (prog_fd != INVALID_SOCKET) {
+    prog_fd_ = prog_fd;
+    RETURN_IF_NOT_OK(loadMaps(prog_fd_));
+
+    routing_config current{};
+    uint32_t zero = 0;
+    if (bpf_map_lookup_elem(routing_fd_, &zero, &current) < 0) {
+      return cleanupAndError(fmt::format("routing_info not found: {}", errorDetails(errno)));
+    }
+
+    current_generation_ = (current.generation + 1) % num_generations_;
     return nullptr;
   }
 
   RETURN_IF_NOT_OK(loadBpfProgram());
-
-  ENVOY_LOG_MISC(info, "epoch_stable: prog_fd={} map1={} map2={} active_map={} concurrency_fd={}",
-                 prog_fd_, map1_fd_, map2_fd_, active_map_fd_, concurrency_fd_);
 
   return std::make_shared<Network::SocketOptionImpl>(
       envoy::config::core::v3::SocketOption::STATE_BOUND, ENVOY_ATTACH_REUSEPORT_EBPF, prog_fd_);
@@ -172,29 +169,17 @@ absl::Status Factory::loadBpfProgram() {
 #if defined(__linux__)
   auto bpf_obj = bpf_object__open_mem(route_bpf_data, route_bpf_data_len, nullptr);
   if (bpf_obj == nullptr) {
-    return absl::InternalError(fmt::format("bpf_object__open_mem: {}", errorDetails(errno)));
+    return absl::InternalError(fmt::format("failed to open bpf object: {}", errorDetails(errno)));
   }
 
-  struct bpf_map* map1 = bpf_object__find_map_by_name(bpf_obj, "map1");
-  if (map1 == nullptr) {
-    return cleanupAndError("map1 not found in BPF object");
+  struct bpf_map* reuseport_proto = bpf_object__find_map_by_name(bpf_obj, "reuseport_map");
+  if (reuseport_proto == nullptr) {
+    return cleanupAndError("reuseport_map prototype not found in BPF object");
   }
-
-  if (bpf_map__set_max_entries(map1, config_.max_map_entries) < 0) {
-    return cleanupAndError(fmt::format("bpf_map__set_max_entries: {}", errorDetails(errno)));
-  }
-
-  struct bpf_map* map2 = bpf_object__find_map_by_name(bpf_obj, "map2");
-  if (map2 == nullptr) {
-    return cleanupAndError("map2 not found in BPF object");
-  }
-
-  if (bpf_map__set_max_entries(map2, config_.max_map_entries) < 0) {
-    return cleanupAndError(fmt::format("bpf_map__set_max_entries: {}", errorDetails(errno)));
-  }
+  const auto inner_map_max_entries = bpf_map__max_entries(reuseport_proto);
 
   if (bpf_object__load(bpf_obj) < 0) {
-    return cleanupAndError(fmt::format("bpf_object__load: {}", errorDetails(errno)));
+    return cleanupAndError(fmt::format("failed to load bpf object: {}", errorDetails(errno)));
   }
 
   struct bpf_program* prog =
@@ -205,16 +190,47 @@ absl::Status Factory::loadBpfProgram() {
 
   prog_fd_ = bpf_program__fd(prog);
   if (prog_fd_ < 0) {
-    return cleanupAndError("failed to get program fd");
+    return cleanupAndError(fmt::format("failed to get program fd: {}", errorDetails(errno)));
   }
 
-  map1_fd_ = bpf_map__fd(bpf_object__find_map_by_name(bpf_obj, "map1"));
-  map2_fd_ = bpf_map__fd(bpf_object__find_map_by_name(bpf_obj, "map2"));
-  active_map_fd_ = bpf_map__fd(bpf_object__find_map_by_name(bpf_obj, "active_map"));
-  concurrency_fd_ = bpf_map__fd(bpf_object__find_map_by_name(bpf_obj, "concurrency"));
+  generations_fd_ = bpf_map__fd(bpf_object__find_map_by_name(bpf_obj, "generations"));
+  if (generations_fd_ < 0) {
+    return cleanupAndError(fmt::format("failed to get generations fd: {}", errorDetails(errno)));
+  }
+  routing_fd_ = bpf_map__fd(bpf_object__find_map_by_name(bpf_obj, "routing"));
+  if (routing_fd_ < 0) {
+    return cleanupAndError(fmt::format("failed to get routing fd: {}", errorDetails(errno)));
+  }
 
-  if (map1_fd_ < 0 || map2_fd_ < 0 || active_map_fd_ < 0 || concurrency_fd_ < 0) {
-    return cleanupAndError("failed to get map fds");
+  bpf_map_info gen_info{};
+  __u32 gen_info_len = sizeof(gen_info);
+  if (bpf_map_get_info_by_fd(generations_fd_, &gen_info, &gen_info_len) < 0) {
+    return cleanupAndError(
+        fmt::format("failed to query generations map info: {}", errorDetails(errno)));
+  }
+  num_generations_ = gen_info.max_entries;
+  if (num_generations_ == 0) {
+    return cleanupAndError("generations map has zero max_entries");
+  }
+
+  bpf_map_create_opts inner_opts{};
+  inner_opts.sz = sizeof(inner_opts);
+  for (uint32_t i = 0; i < num_generations_; ++i) {
+    const auto name = fmt::format("generation_{}", i);
+    const int inner_fd =
+        bpf_map_create(BPF_MAP_TYPE_REUSEPORT_SOCKARRAY, name.c_str(), sizeof(uint32_t),
+                       sizeof(uint32_t), inner_map_max_entries, &inner_opts);
+    if (inner_fd < 0) {
+      return cleanupAndError(
+          fmt::format("failed to create inner map {}: {}", i, errorDetails(errno)));
+    }
+    const int rc = bpf_map_update_elem(generations_fd_, &i, &inner_fd, BPF_ANY);
+    const int saved_errno = errno;
+    close(inner_fd);
+    if (rc < 0) {
+      return cleanupAndError(
+          fmt::format("failed to insert inner map {}: {}", i, errorDetails(saved_errno)));
+    }
   }
 
   return absl::OkStatus();
@@ -225,27 +241,19 @@ absl::Status Factory::loadBpfProgram() {
 
 absl::Status Factory::cleanupAndError(absl::string_view message) {
 #if defined(__linux__)
-  if (map1_fd_ >= 0) {
-    close(map1_fd_);
-    map1_fd_ = INVALID_SOCKET;
+  if (generations_fd_ >= 0) {
+    close(generations_fd_);
+    generations_fd_ = INVALID_SOCKET;
   }
-  if (map2_fd_ >= 0) {
-    close(map2_fd_);
-    map2_fd_ = INVALID_SOCKET;
-  }
-  if (active_map_fd_ >= 0) {
-    close(active_map_fd_);
-    active_map_fd_ = INVALID_SOCKET;
-  }
-  if (concurrency_fd_ >= 0) {
-    close(concurrency_fd_);
-    concurrency_fd_ = INVALID_SOCKET;
+  if (routing_fd_ >= 0) {
+    close(routing_fd_);
+    routing_fd_ = INVALID_SOCKET;
   }
   if (prog_fd_ >= 0) {
     close(prog_fd_);
     prog_fd_ = INVALID_SOCKET;
   }
-  return absl::InternalError(fmt::format("epoch_stable: {}", message));
+  return absl::InternalError(message);
 #else
   UNREFERENCED_PARAMETER(message);
   return absl::OkStatus();
@@ -254,24 +262,39 @@ absl::Status Factory::cleanupAndError(absl::string_view message) {
 
 void Factory::registerWorkerSocket(uint32_t worker_index, const Network::Socket& socket) {
 #if defined(__linux__)
-  auto map = config_.active_map_index == 0 ? map1_fd_ : map2_fd_;
+  const os_fd_t sock_fd = socket.ioHandle().fdDoNotUse();
 
-  uint32_t key = worker_index;
-  os_fd_t fd = socket.ioHandle().fdDoNotUse();
-  if (bpf_map_update_elem(map, &key, &fd, BPF_ANY) < 0) {
-    ENVOY_LOG_MISC(error, "epoch_stable: registerWorkerSocket worker={} fd={} failed: {}",
-                   worker_index, fd, errorDetails(errno));
+  uint32_t inner_id = 0;
+  const uint32_t slot = static_cast<uint32_t>(current_generation_);
+  if (bpf_map_lookup_elem(generations_fd_, &slot, &inner_id) < 0) {
+    ENVOY_LOG_MISC(error, "getting id of generation {} failed: {}", slot, errorDetails(errno));
     return;
-  } else {
-    ENVOY_LOG_MISC(error, "epoch_stable: registerWorkerSocket worker={} fd={}", worker_index, fd);
+  }
+  const int inner_fd = bpf_map_get_fd_by_id(inner_id);
+  if (inner_fd < 0) {
+    ENVOY_LOG_MISC(error, "getting fd of current generation at id {} failed: {}", inner_id,
+                   errorDetails(errno));
+    return;
+  }
+
+  const int rc = bpf_map_update_elem(inner_fd, &worker_index, &sock_fd, BPF_ANY);
+  const int saved_errno = errno;
+  close(inner_fd);
+
+  if (rc < 0) {
+    ENVOY_LOG_MISC(error, "registerWorkerSocket gen={} worker={} fd={} failed: {}",
+                   current_generation_, worker_index, sock_fd, errorDetails(saved_errno));
+    return;
   }
 
   if (registered_workers_.fetch_add(1) + 1 == concurrency_) {
+    routing_config cfg{};
+    cfg.generation = static_cast<uint8_t>(current_generation_);
+    cfg.concurrency = concurrency_;
     uint32_t zero = 0;
-    bpf_map_update_elem(concurrency_fd_, &zero, &concurrency_, BPF_ANY);
-    bpf_map_update_elem(active_map_fd_, &zero, &config_.active_map_index, BPF_ANY);
-    ENVOY_LOG_MISC(error, "epoch_stable: all {} workers registered, concurrency set, active_map {}",
-                   concurrency_, config_.active_map_index);
+    if (bpf_map_update_elem(routing_fd_, &zero, &cfg, BPF_ANY) < 0) {
+      ENVOY_LOG_MISC(error, "publishing routing_config failed: {}", errorDetails(errno));
+    }
   }
 #else
   UNREFERENCED_PARAMETER(worker_index);
