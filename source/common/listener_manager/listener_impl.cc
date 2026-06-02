@@ -149,20 +149,43 @@ ListenSocketFactoryImpl::ListenSocketFactoryImpl(const ListenSocketFactoryImpl& 
       tcp_backlog_size_(factory_to_clone.tcp_backlog_size_),
       bind_type_(factory_to_clone.bind_type_),
       socket_creation_options_(factory_to_clone.socket_creation_options_) {
-  for (auto& socket : factory_to_clone.sockets_) {
-    // In the cloning case we always duplicate() the socket. This makes sure that during listener
-    // update/drain we don't lose any incoming connections when using reuse_port. Specifically on
-    // Linux the use of SO_REUSEPORT causes the kernel to allocate a separate queue for each socket
-    // on the same address. Incoming connections are immediately assigned to one of these queues.
-    // If connections are in the queue when the socket is closed, they are closed/reset, not sent to
-    // another queue. So avoid making extra queues in the kernel, even temporarily.
-    //
-    // TODO(mattklein123): In the current code as long as the address matches, the socket factory
-    // will be cloned, effectively ignoring any changed socket options. The code should probably
-    // block any updates to listeners that use the same address but different socket options.
-    // (It's possible we could handle changing some socket options, but this would be tricky and
-    // probably not worth the difficulty.)
-    sockets_.push_back(socket->duplicate());
+
+  if (!socket_creation_options_.skip_hot_restart_socket_inheritance_) {
+    for (auto& socket : factory_to_clone.sockets_) {
+      // In the cloning case we always duplicate() the socket. This makes sure that during listener
+      // update/drain we don't lose any incoming connections when using reuse_port. Specifically on
+      // Linux the use of SO_REUSEPORT causes the kernel to allocate a separate queue for each
+      // socket on the same address. Incoming connections are immediately assigned to one of these
+      // queues. If connections are in the queue when the socket is closed, they are closed/reset,
+      // not sent to another queue. So avoid making extra queues in the kernel, even temporarily.
+      //
+      // TODO(mattklein123): In the current code as long as the address matches, the socket factory
+      // will be cloned, effectively ignoring any changed socket options. The code should probably
+      // block any updates to listeners that use the same address but different socket options.
+      // (It's possible we could handle changing some socket options, but this would be tricky and
+      // probably not worth the difficulty.)
+      sockets_.push_back(socket->duplicate());
+    }
+  } else {
+    ASSERT(socket_type_ == Network::Socket::Type::Datagram,
+           "skip_hot_restart_socket_inheritance is only valid for UDP listeners");
+    const os_fd_t parent_bpf_prog_fd =
+        factory_to_clone.sockets_.empty()
+            ? INVALID_SOCKET
+            : factory_to_clone.sockets_[0]->ioHandle().bpfProgFd();
+
+    for (size_t i = 0; i < factory_to_clone.sockets_.size(); ++i) {
+      auto listen_socket = std::make_shared<Network::UdpListenSocket>(
+          local_address_, options_, /*bind_to_port=*/true, socket_creation_options_);
+      if (parent_bpf_prog_fd != INVALID_SOCKET) {
+        auto dup_result = Api::OsSysCallsSingleton::get().duplicate(parent_bpf_prog_fd);
+        RELEASE_ASSERT(dup_result.return_value_ != -1,
+                       fmt::format("failed to dup bpf_prog_fd {}: errno={}", parent_bpf_prog_fd,
+                                   dup_result.errno_));
+        listen_socket->ioHandle().setBpfProgFd(dup_result.return_value_);
+      }
+      sockets_.push_back(std::move(listen_socket));
+    }
   }
 }
 
