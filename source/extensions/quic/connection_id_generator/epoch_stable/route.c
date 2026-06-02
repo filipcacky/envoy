@@ -8,7 +8,8 @@
 #define QUIC_PKT_LONG 0x80
 #define QUIC_CID_LENGTH 8
 #define QUIC_CID_GEN_OFFSET 8
-#define QUIC_CID_WITH_ROUTING_LENGTH 9
+#define QUIC_CID_WORKER_ID_OFFSET 9
+#define QUIC_CID_WITH_ROUTING_LENGTH 10
 
 #define NGEN 16
 
@@ -35,76 +36,80 @@ struct {
   __uint(max_entries, 1);
 } routing SEC(".maps");
 
-static __always_inline int extract_dcid(unsigned char* start, unsigned char* end,
-                                        __u32 udp_payload_offset, __u32* dcid, __u8* gen_byte,
-                                        int* is_long) {
-  __u32 offset = udp_payload_offset;
-
-  if (start + offset + 1 > end)
-    return SK_DROP;
-
-  __u8 flags = start[offset];
-  offset += 1;
-
-  __u32 dcid_offset;
-  __u8 dcid_len;
-  *is_long = (flags & QUIC_PKT_LONG) ? 1 : 0;
-
-  if (*is_long) {
-    // Long header: flags(1) | version(4) | dcid_len(1) | dcid(...)
-    if (start + offset + 5 > end)
-      return SK_DROP;
-    dcid_len = start[offset + 4];
-    dcid_offset = offset + 5;
-  } else {
-    // Short header: flags(1) | dcid(...) | gen_byte(1)
-    dcid_len = QUIC_CID_WITH_ROUTING_LENGTH;
-    dcid_offset = offset;
-  }
-
-  if (dcid_len < QUIC_CID_LENGTH || start + dcid_offset + QUIC_CID_LENGTH > end) {
+static __always_inline int handle_short_header(struct sk_reuseport_md* ctx, __u32 offset) {
+  // Short header: flags(1) | dcid(QUIC_CID_WITH_ROUTING_LENGTH)
+  if (ctx->data + offset + QUIC_CID_WITH_ROUTING_LENGTH > ctx->data_end) {
     return SK_DROP;
   }
-  *dcid = *(__u32*)(start + dcid_offset);
 
-  if (!*is_long) {
-    if (dcid_len < QUIC_CID_WITH_ROUTING_LENGTH ||
-        start + dcid_offset + QUIC_CID_WITH_ROUTING_LENGTH > end) {
-      return SK_DROP;
-    }
-    *gen_byte = *(__u8*)(start + dcid_offset + QUIC_CID_GEN_OFFSET);
+  __u32 stable_dcid_part = *(__u32*)(ctx->data + offset);
+  __u32 generation = *(__u8*)(ctx->data + offset + QUIC_CID_GEN_OFFSET);
+  __u32 worker_index = *(__u8*)(ctx->data + offset + QUIC_CID_WORKER_ID_OFFSET);
+
+  void* inner = bpf_map_lookup_elem(&generations, &generation);
+  if (inner == NULL) {
+    return SK_DROP;
   }
 
-  return SK_PASS;
+  if (bpf_sk_select_reuseport(ctx, inner, &worker_index, 0) == 0) {
+    return SK_PASS;
+  }
+  return SK_DROP;
 }
 
-SEC("sk_reuseport")
-int epoch_stable_select_socket(struct sk_reuseport_md* ctx) {
+static __always_inline int handle_long_header(struct sk_reuseport_md* ctx, __u32 offset) {
   __u32 zero = 0;
-  __u32 dcid = 0;
-  __u8 gen_byte = 0;
-  int is_long = 0;
-
   struct routing_config* cfg = bpf_map_lookup_elem(&routing, &zero);
   if (cfg == NULL || cfg->concurrency == 0) {
     return SK_DROP;
   }
 
-  if (extract_dcid(ctx->data, ctx->data_end, sizeof(struct udphdr), &dcid, &gen_byte, &is_long) ==
-      SK_DROP) {
-    return SK_DROP;
-  }
-
-  __u32 gen_idx = is_long ? (cfg->generation % NGEN) : (gen_byte % NGEN);
-
-  void* inner = bpf_map_lookup_elem(&generations, &gen_idx);
+  void* inner = bpf_map_lookup_elem(&generations, &cfg->generation);
   if (inner == NULL) {
     return SK_DROP;
   }
 
-  __u32 worker_key = dcid % cfg->concurrency;
-  if (bpf_sk_select_reuseport(ctx, inner, &worker_key, 0) == 0) {
+  // Long header: flags(1) | version(4) | dcid_len(1) | dcid(...)
+  offset += 4;
+  if (ctx->data + offset + 1 > ctx->data_end) {
+    return SK_DROP;
+  }
+  __u8 dcid_len = ((__u8*)ctx->data)[offset];
+  offset += 1;
+
+  if (ctx->data + offset + dcid_len > ctx->data_end || dcid_len < QUIC_CID_LENGTH) {
+    return SK_DROP;
+  }
+
+  // The variable-length dcid_len check above bounds a temporary pointer, not the
+  // base used for the read below, so the verifier won't grant it range. Re-check
+  // with a constant length to read the first 4 bytes of the dcid.
+  if (ctx->data + offset + sizeof(__u32) > ctx->data_end) {
+    return SK_DROP;
+  }
+
+  __u32 stable_dcid_part = *(__u32*)(ctx->data + offset);
+  __u32 worker_index = stable_dcid_part % cfg->concurrency;
+
+  if (bpf_sk_select_reuseport(ctx, inner, &worker_index, 0) == 0) {
     return SK_PASS;
   }
   return SK_DROP;
+}
+
+SEC("sk_reuseport")
+int epoch_stable_select_socket(struct sk_reuseport_md* ctx) {
+  __u32 offset = sizeof(struct udphdr);
+
+  if (ctx->data + offset + 1 > ctx->data_end)
+    return SK_DROP;
+
+  __u8 flags = ((__u8*)ctx->data)[offset];
+  offset += 1;
+
+  if (flags & QUIC_PKT_LONG) {
+    return handle_long_header(ctx, offset);
+  } else {
+    return handle_short_header(ctx, offset);
+  }
 }

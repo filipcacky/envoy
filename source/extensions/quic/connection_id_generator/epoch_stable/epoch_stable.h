@@ -25,8 +25,10 @@ struct EpochStableConfig {
 
 class EnvoyDeterministicConnectionIdGenerator : public quic::DeterministicConnectionIdGenerator {
 public:
-  EnvoyDeterministicConnectionIdGenerator(uint32_t connection_id_length, uint8_t generation)
-      : quic::DeterministicConnectionIdGenerator(connection_id_length), generation_(generation) {}
+  EnvoyDeterministicConnectionIdGenerator(uint32_t connection_id_length, uint8_t generation,
+                                          uint8_t worker_index)
+      : quic::DeterministicConnectionIdGenerator(connection_id_length), generation_(generation),
+        worker_index_(worker_index) {}
 
   absl::optional<quic::QuicConnectionId>
   GenerateNextConnectionId(const quic::QuicConnectionId& original) override;
@@ -36,6 +38,7 @@ public:
 
 private:
   uint8_t generation_;
+  uint8_t worker_index_;
 };
 
 class Factory : public EnvoyQuicConnectionIdGeneratorFactory {

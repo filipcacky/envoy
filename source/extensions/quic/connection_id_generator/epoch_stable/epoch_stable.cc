@@ -19,7 +19,8 @@ namespace EpochStable {
 namespace {
 
 constexpr size_t kGenByteOffset = quic::kQuicDefaultConnectionIdLength;
-constexpr uint32_t kCidLength = quic::kQuicDefaultConnectionIdLength + 1;
+constexpr size_t kWorkerIndexOffset = quic::kQuicDefaultConnectionIdLength + 1;
+constexpr uint32_t kCidLength = quic::kQuicDefaultConnectionIdLength + 2;
 
 void adjustNewConnectionIdForRouting(quic::QuicConnectionId& new_connection_id,
                                      const quic::QuicConnectionId& old_connection_id) {
@@ -42,6 +43,7 @@ EnvoyDeterministicConnectionIdGenerator::GenerateNextConnectionId(
     return absl::nullopt;
   }
   new_cid->mutable_data()[kGenByteOffset] = static_cast<char>(generation_);
+  new_cid->mutable_data()[kWorkerIndexOffset] = static_cast<char>(worker_index_);
   return new_cid;
 }
 
@@ -57,6 +59,7 @@ EnvoyDeterministicConnectionIdGenerator::MaybeReplaceConnectionId(
     return absl::nullopt;
   }
   new_cid->mutable_data()[kGenByteOffset] = static_cast<char>(generation_);
+  new_cid->mutable_data()[kWorkerIndexOffset] = static_cast<char>(worker_index_);
   return new_cid;
 }
 
@@ -130,8 +133,9 @@ absl::Status Factory::loadMaps(os_fd_t prog_fd) {
 #endif
 }
 
-QuicConnectionIdGeneratorPtr Factory::createQuicConnectionIdGenerator(uint32_t) {
-  return std::make_unique<EnvoyDeterministicConnectionIdGenerator>(kCidLength, current_generation_);
+QuicConnectionIdGeneratorPtr Factory::createQuicConnectionIdGenerator(uint32_t worker_index) {
+  return std::make_unique<EnvoyDeterministicConnectionIdGenerator>(kCidLength, current_generation_,
+                                                                   worker_index);
 }
 
 absl::StatusOr<Network::Socket::OptionConstSharedPtr>
