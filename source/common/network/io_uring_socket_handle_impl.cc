@@ -223,13 +223,23 @@ Api::SysCallIntResult IoUringSocketHandleImpl::getOption(int level, int optname,
 IoHandlePtr IoUringSocketHandleImpl::duplicate() {
   ENVOY_LOG(trace, "duplicate, fd = {}, type = {}", fd_, ioUringSocketTypeStr());
 
-  Api::SysCallSocketResult result = Api::OsSysCallsSingleton::get().duplicate(fd_);
-  RELEASE_ASSERT(result.return_value_ != -1,
-                 fmt::format("duplicate failed for '{}': ({}) {}", fd_, result.errno_,
-                             errorDetails(result.errno_)));
-  return SocketInterfaceImpl::makePlatformSpecificSocket(result.return_value_, socket_v6only_,
-                                                         domain_, Network::SocketCreationOptions{},
-                                                         &io_uring_worker_factory_);
+  Api::SysCallSocketResult fd_result = Api::OsSysCallsSingleton::get().duplicate(fd_);
+  RELEASE_ASSERT(fd_result.return_value_ != -1,
+                 fmt::format("duplicate failed for '{}': ({}) {}", fd_, fd_result.errno_,
+                             errorDetails(fd_result.errno_)));
+  auto result = SocketInterfaceImpl::makePlatformSpecificSocket(
+      fd_result.return_value_, socket_v6only_, domain_, Network::SocketCreationOptions{},
+      &io_uring_worker_factory_);
+
+  if (bpf_prog_fd_ != INVALID_SOCKET) {
+    auto bpf_fd_result = Api::OsSysCallsSingleton::get().duplicate(bpf_prog_fd_);
+    RELEASE_ASSERT(bpf_fd_result.return_value_ != -1,
+                   fmt::format("duplicate failed for '{}': ({}) {}", bpf_prog_fd_,
+                               bpf_fd_result.errno_, errorDetails(bpf_fd_result.errno_)));
+    result->setBpfProgFd(bpf_fd_result.return_value_);
+  }
+
+  return result;
 }
 
 void IoUringSocketHandleImpl::initializeFileEvent(Event::Dispatcher& dispatcher,

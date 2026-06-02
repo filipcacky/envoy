@@ -588,12 +588,22 @@ Api::SysCallIntResult IoSocketHandleImpl::connect(Address::InstanceConstSharedPt
 }
 
 IoHandlePtr IoSocketHandleImpl::duplicate() {
-  auto result = Api::OsSysCallsSingleton::get().duplicate(fd_);
-  RELEASE_ASSERT(result.return_value_ != -1,
-                 fmt::format("duplicate failed for '{}': ({}) {}", fd_, result.errno_,
-                             errorDetails(result.errno_)));
-  return SocketInterfaceImpl::makePlatformSpecificSocket(result.return_value_, socket_v6only_,
-                                                         domain_, {false, addressCacheMaxSize()});
+  auto fd_result = Api::OsSysCallsSingleton::get().duplicate(fd_);
+  RELEASE_ASSERT(fd_result.return_value_ != -1,
+                 fmt::format("duplicate failed for '{}': ({}) {}", fd_, fd_result.errno_,
+                             errorDetails(fd_result.errno_)));
+  auto result = SocketInterfaceImpl::makePlatformSpecificSocket(
+      fd_result.return_value_, socket_v6only_, domain_, {false, addressCacheMaxSize()});
+
+  if (bpf_prog_fd_ != INVALID_SOCKET) {
+    auto bpf_fd_result = Api::OsSysCallsSingleton::get().duplicate(bpf_prog_fd_);
+    RELEASE_ASSERT(bpf_fd_result.return_value_ != -1,
+                   fmt::format("duplicate failed for '{}': ({}) {}", bpf_prog_fd_,
+                               bpf_fd_result.errno_, errorDetails(bpf_fd_result.errno_)));
+    result->setBpfProgFd(bpf_fd_result.return_value_);
+  }
+
+  return result;
 }
 
 void IoSocketHandleImpl::initializeFileEvent(Event::Dispatcher& dispatcher, Event::FileReadyCb cb,

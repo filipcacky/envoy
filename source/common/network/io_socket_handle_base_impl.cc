@@ -25,6 +25,9 @@ IoSocketHandleBaseImpl::~IoSocketHandleBaseImpl() {
     // better use this posix system call instead of IoSocketHandleBaseImpl::close().
     ::close(fd_);
   }
+  if (SOCKET_VALID(bpf_prog_fd_)) {
+    ::close(bpf_prog_fd_);
+  }
 }
 
 bool IoSocketHandleBaseImpl::isOpen() const { return SOCKET_VALID(fd_); }

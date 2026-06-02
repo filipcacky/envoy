@@ -392,7 +392,14 @@ ActiveQuicListenerFactory::doFinalPreWorkerInit(Network::ListenSocketFactory& so
       cid_generator_config_factory_->createQuicConnectionIdGeneratorFactory(
           *cid_generator_config_message_, *validation_visitor_, context_);
 
-  const os_fd_t received_bpf_prog_fd = socket_factory.getListenSocket(0)->ioHandle().bpfProgFd();
+  os_fd_t received_bpf_prog_fd = socket_factory.getListenSocket(0)->ioHandle().bpfProgFd();
+  if (SOCKET_VALID(received_bpf_prog_fd)) {
+    auto duplicate_result = Api::OsSysCallsSingleton::get().duplicate(received_bpf_prog_fd);
+    if (!SOCKET_VALID(duplicate_result.return_value_)) {
+      return absl::InternalError(errorDetails(duplicate_result.errno_));
+    }
+    received_bpf_prog_fd = duplicate_result.return_value_;
+  }
 
   state.worker_selector_ =
       state.cid_generator_factory_->getCompatibleConnectionIdWorkerSelector(concurrency_);
@@ -407,7 +414,16 @@ ActiveQuicListenerFactory::doFinalPreWorkerInit(Network::ListenSocketFactory& so
         state.kernel_worker_routing_ = true;
 
         const auto listen_socket = socket_factory.getListenSocket(0);
-        listen_socket->ioHandle().setBpfProgFd(state.cid_generator_factory_->bpfProgFd());
+
+        if (!SOCKET_VALID(received_bpf_prog_fd)) {
+          auto duplicate_result =
+              Api::OsSysCallsSingleton::get().duplicate(state.cid_generator_factory_->bpfProgFd());
+          if (!SOCKET_VALID(duplicate_result.return_value_)) {
+            return absl::InternalError(errorDetails(duplicate_result.errno_));
+          }
+          listen_socket->ioHandle().setBpfProgFd(duplicate_result.return_value_);
+        }
+
         if (opt_or_error.value() != nullptr) {
           opt_or_error.value()->setOption(*listen_socket,
                                           envoy::config::core::v3::SocketOption::STATE_BOUND);
