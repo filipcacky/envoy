@@ -18,9 +18,9 @@ public:
   MOCK_METHOD(QuicConnectionIdGeneratorPtr, createQuicConnectionIdGenerator,
               (uint32_t worker_index), (override));
   MOCK_METHOD((absl::StatusOr<Network::Socket::OptionConstSharedPtr>),
-              createCompatibleLinuxBpfSocketOption, (uint32_t concurrency), (override));
-  MOCK_METHOD(QuicConnectionIdWorkerSelector, getCompatibleConnectionIdWorkerSelector,
-              (uint32_t concurrency), (override));
+              createCompatibleLinuxBpfSocketOption, (), (override));
+  MOCK_METHOD(QuicConnectionIdWorkerSelector, getCompatibleConnectionIdWorkerSelector, (),
+              (override));
 };
 
 class MockEnvoyQuicConnectionIdGeneratorContext : public EnvoyQuicConnectionIdGeneratorContext {

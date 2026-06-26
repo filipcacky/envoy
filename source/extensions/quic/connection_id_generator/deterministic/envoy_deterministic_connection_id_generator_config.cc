@@ -19,8 +19,9 @@ EnvoyDeterministicConnectionIdGeneratorConfigFactory::createEmptyConfigProto() {
 EnvoyQuicConnectionIdGeneratorContextPtr
 EnvoyDeterministicConnectionIdGeneratorConfigFactory::createQuicConnectionIdGeneratorContext(
     const Protobuf::Message&, ProtobufMessage::ValidationVisitor&,
-    Server::Configuration::FactoryContext&) {
-  return std::make_unique<EnvoyDeterministicConnectionIdGeneratorContext>();
+    Server::Configuration::FactoryContext& factory_context) {
+  return std::make_unique<EnvoyDeterministicConnectionIdGeneratorContext>(
+      factory_context.serverFactoryContext().options().concurrency());
 }
 
 REGISTER_FACTORY(EnvoyDeterministicConnectionIdGeneratorConfigFactory,

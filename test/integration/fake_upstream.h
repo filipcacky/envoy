@@ -942,7 +942,7 @@ private:
               testing::NiceMock<Server::Configuration::MockListenerFactoryContext>>();
         }
         udp_listener_config_.listener_factory_ = std::make_unique<Quic::ActiveQuicListenerFactory>(
-            parent_.quic_options_, 1, parent_.quic_stat_names_, parent_.validation_visitor_,
+            parent_.quic_options_, parent_.quic_stat_names_, parent_.validation_visitor_,
             *context_);
         // Initialize QUICHE flags.
         quiche::FlagRegistry::getInstance();

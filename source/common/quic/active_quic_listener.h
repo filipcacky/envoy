@@ -120,7 +120,7 @@ class ActiveQuicListenerFactory : public Network::ActiveUdpListenerFactory,
                                   Logger::Loggable<Logger::Id::quic> {
 public:
   ActiveQuicListenerFactory(const envoy::config::listener::v3::QuicProtocolOptions& config,
-                            uint32_t concurrency, QuicStatNames& quic_stat_names,
+                            QuicStatNames& quic_stat_names,
                             ProtobufMessage::ValidationVisitor& validation_visitor,
                             Server::Configuration::ListenerFactoryContext& context);
 
@@ -140,15 +140,16 @@ public:
 
 protected:
   virtual Network::ConnectionHandler::ActiveUdpListenerPtr createActiveQuicListener(
-      Runtime::Loader& runtime, uint32_t worker_index, uint32_t concurrency,
-      Event::Dispatcher& dispatcher, Network::UdpConnectionHandler& parent,
-      Network::SocketSharedPtr&& listen_socket, Network::ListenerConfig& listener_config,
-      const quic::QuicConfig& quic_config, bool kernel_worker_routing,
-      const envoy::config::core::v3::RuntimeFeatureFlag& enabled, QuicStatNames& quic_stat_names,
-      uint32_t packets_to_read_to_connection_count_ratio,
+      Runtime::Loader& runtime, uint32_t worker_index, Event::Dispatcher& dispatcher,
+      Network::UdpConnectionHandler& parent, Network::SocketSharedPtr&& listen_socket,
+      Network::ListenerConfig& listener_config, const quic::QuicConfig& quic_config,
+      bool kernel_worker_routing, const envoy::config::core::v3::RuntimeFeatureFlag& enabled,
+      QuicStatNames& quic_stat_names, uint32_t packets_to_read_to_connection_count_ratio,
       EnvoyQuicCryptoServerStreamFactoryInterface& crypto_server_stream_factory,
       EnvoyQuicProofSourceFactoryInterface& proof_source_factory,
       QuicConnectionIdGeneratorPtr&& cid_generator);
+
+  Server::Configuration::ListenerFactoryContext& context_;
 
 private:
   friend class ActiveQuicListenerFactoryPeer;
@@ -161,14 +162,12 @@ private:
   EnvoyQuicConnectionIdGeneratorFactoryPtr quic_cid_generator_factory_;
   EnvoyQuicServerPreferredAddressConfigPtr server_preferred_address_config_;
   quic::QuicConfig quic_config_;
-  const uint32_t concurrency_;
   envoy::config::core::v3::RuntimeFeatureFlag enabled_;
   QuicStatNames& quic_stat_names_;
   const uint32_t packets_to_read_to_connection_count_ratio_;
   const Network::Socket::OptionsSharedPtr options_{std::make_shared<Network::Socket::Options>()};
   QuicConnectionIdWorkerSelector worker_selector_;
   bool kernel_worker_routing_{};
-  Server::Configuration::ListenerFactoryContext& context_;
   bool reject_new_connections_{};
 
   static bool disable_kernel_bpf_packet_routing_for_test_;

@@ -476,8 +476,7 @@ ListenerImpl::ListenerImpl(const envoy::config::listener::v3::Listener& config,
 
   // buildUdpListenerFactory() must come before buildListenSocketOptions() because the UDP
   // listener factory can provide additional options.
-  SET_AND_RETURN_IF_NOT_OK(buildUdpListenerFactory(config, parent_.server_.options().concurrency()),
-                           creation_status);
+  SET_AND_RETURN_IF_NOT_OK(buildUdpListenerFactory(config), creation_status);
   buildListenSocketOptions(config, address_opts_list);
   SET_AND_RETURN_IF_NOT_OK(createListenerFilterFactories(config), creation_status);
   SET_AND_RETURN_IF_NOT_OK(validateFilterChains(config), creation_status);
@@ -668,8 +667,7 @@ ListenerImpl::buildInternalListener(const envoy::config::listener::v3::Listener&
   return absl::OkStatus();
 }
 
-bool ListenerImpl::buildUdpListenerWorkerRouter(const Network::Address::Instance& address,
-                                                uint32_t concurrency) {
+bool ListenerImpl::buildUdpListenerWorkerRouter(const Network::Address::Instance& address) {
   if (socket_type_ != Network::Socket::Type::Datagram) {
     return false;
   }
@@ -678,7 +676,9 @@ bool ListenerImpl::buildUdpListenerWorkerRouter(const Network::Address::Instance
     return false;
   }
   udp_listener_config_->listener_worker_routers_.emplace(
-      address.asString(), std::make_unique<Network::UdpListenerWorkerRouterImpl>(concurrency));
+      address.asString(),
+      std::make_unique<Network::UdpListenerWorkerRouterImpl>(
+          listener_factory_context_->serverFactoryContext().options().concurrency()));
   return true;
 }
 
@@ -694,8 +694,9 @@ absl::Status ListenerImpl::doFinalPreWorkerInit() {
 }
 
 absl::Status
-ListenerImpl::buildUdpListenerFactory(const envoy::config::listener::v3::Listener& config,
-                                      uint32_t concurrency) {
+ListenerImpl::buildUdpListenerFactory(const envoy::config::listener::v3::Listener& config) {
+  const auto concurrency =
+      listener_factory_context_->serverFactoryContext().options().concurrency();
   if (socket_type_ != Network::Socket::Type::Datagram) {
     return absl::OkStatus();
   }
@@ -723,8 +724,8 @@ ListenerImpl::buildUdpListenerFactory(const envoy::config::listener::v3::Listene
           "doesn't work with connection balancer.");
     }
     udp_listener_config_->listener_factory_ = std::make_unique<Quic::ActiveQuicListenerFactory>(
-        config.udp_listener_config().quic_options(), concurrency, quic_stat_names_,
-        validation_visitor_, *listener_factory_context_);
+        config.udp_listener_config().quic_options(), quic_stat_names_, validation_visitor_,
+        *listener_factory_context_);
 #if UDP_GSO_BATCH_WRITER_COMPILETIME_SUPPORT
     // TODO(mattklein123): We should be able to use GSO without QUICHE/QUIC. Right now this causes
     // non-QUIC integration tests to fail, which I haven't investigated yet. Additionally, from
@@ -1139,8 +1140,7 @@ Init::Manager& ListenerImpl::initManager() { return *dynamic_init_manager_; }
 
 absl::Status ListenerImpl::addSocketFactory(Network::ListenSocketFactoryPtr&& socket_factory) {
   RETURN_IF_NOT_OK(buildConnectionBalancer(configInternal(), *socket_factory->localAddress()));
-  if (buildUdpListenerWorkerRouter(*socket_factory->localAddress(),
-                                   parent_.server_.options().concurrency())) {
+  if (buildUdpListenerWorkerRouter(*socket_factory->localAddress())) {
     parent_.server_.hotRestart().registerUdpForwardingListener(socket_factory->localAddress(),
                                                                udp_listener_config_);
   }

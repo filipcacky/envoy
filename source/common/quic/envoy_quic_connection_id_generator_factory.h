@@ -33,18 +33,16 @@ public:
   /**
    * Create a socket option with BPF program to consistently route QUIC packets to the right listen
    * socket. Linux only, absl::UnimplementedError on other platforms.
-   * @param concurrency the total number of worker threads.
    * @returns the socket option or an error status.
    */
   virtual absl::StatusOr<Network::Socket::OptionConstSharedPtr>
-  createCompatibleLinuxBpfSocketOption(uint32_t concurrency) PURE;
+  createCompatibleLinuxBpfSocketOption() PURE;
 
   /**
    * Returns a function to retrieve the worker index associated with a QUIC packet; the same
    * principle as the BPF program above, but for contexts where BPF is unavailable.
    */
-  virtual QuicConnectionIdWorkerSelector
-  getCompatibleConnectionIdWorkerSelector(uint32_t concurrency) PURE;
+  virtual QuicConnectionIdWorkerSelector getCompatibleConnectionIdWorkerSelector() PURE;
 };
 
 using EnvoyQuicConnectionIdGeneratorFactoryPtr =
