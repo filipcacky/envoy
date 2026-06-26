@@ -219,7 +219,6 @@ public:
    * @param workers_started supplies whether the listener is being added before or after workers
    *        have been started. This controls various behavior related to init management.
    * @param hash supplies the hash to use for duplicate checking.
-   * @param concurrency is the number of listeners instances to be created.
    */
   static absl::StatusOr<std::unique_ptr<ListenerImpl>>
   create(const envoy::config::listener::v3::Listener& config, const std::string& version_info,
@@ -426,10 +425,8 @@ private:
   void buildAccessLog(const envoy::config::listener::v3::Listener& config);
   absl::Status buildInternalListener(const envoy::config::listener::v3::Listener& config);
   absl::Status validateConfig();
-  bool buildUdpListenerWorkerRouter(const Network::Address::Instance& address,
-                                    uint32_t concurrency);
-  absl::Status buildUdpListenerFactory(const envoy::config::listener::v3::Listener& config,
-                                       uint32_t concurrency);
+  bool buildUdpListenerWorkerRouter(const Network::Address::Instance& address);
+  absl::Status buildUdpListenerFactory(const envoy::config::listener::v3::Listener& config);
   void buildListenSocketOptions(const envoy::config::listener::v3::Listener& config,
                                 std::vector<Network::Socket::OptionsSharedPtr>& address_opts_list);
   absl::Status createListenerFilterFactories(const envoy::config::listener::v3::Listener& config);

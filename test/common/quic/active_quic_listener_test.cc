@@ -88,20 +88,20 @@ public:
 
 protected:
   Network::ConnectionHandler::ActiveUdpListenerPtr createActiveQuicListener(
-      Runtime::Loader& runtime, uint32_t worker_index, uint32_t concurrency,
-      Event::Dispatcher& dispatcher, Network::UdpConnectionHandler& parent,
-      Network::SocketSharedPtr&& listen_socket, Network::ListenerConfig& listener_config,
-      const quic::QuicConfig& quic_config, bool kernel_worker_routing,
-      const envoy::config::core::v3::RuntimeFeatureFlag& enabled, QuicStatNames& quic_stat_names,
-      uint32_t packets_to_read_to_connection_count_ratio,
+      Runtime::Loader& runtime, uint32_t worker_index, Event::Dispatcher& dispatcher,
+      Network::UdpConnectionHandler& parent, Network::SocketSharedPtr&& listen_socket,
+      Network::ListenerConfig& listener_config, const quic::QuicConfig& quic_config,
+      bool kernel_worker_routing, const envoy::config::core::v3::RuntimeFeatureFlag& enabled,
+      QuicStatNames& quic_stat_names, uint32_t packets_to_read_to_connection_count_ratio,
       EnvoyQuicCryptoServerStreamFactoryInterface& crypto_server_stream_factory,
       EnvoyQuicProofSourceFactoryInterface& proof_source_factory,
       QuicConnectionIdGeneratorPtr&& cid_generator) override {
     return std::make_unique<TestActiveQuicListener>(
-        runtime, worker_index, concurrency, dispatcher, parent, std::move(listen_socket),
-        listener_config, quic_config, kernel_worker_routing, enabled, quic_stat_names,
-        packets_to_read_to_connection_count_ratio, crypto_server_stream_factory,
-        proof_source_factory, std::move(cid_generator), testWorkerSelector, std::nullopt);
+        runtime, worker_index, context_.serverFactoryContext().options().concurrency(), dispatcher,
+        parent, std::move(listen_socket), listener_config, quic_config, kernel_worker_routing,
+        enabled, quic_stat_names, packets_to_read_to_connection_count_ratio,
+        crypto_server_stream_factory, proof_source_factory, std::move(cid_generator),
+        testWorkerSelector, std::nullopt);
   }
 };
 
@@ -228,8 +228,7 @@ protected:
     TestUtility::loadFromYamlAndValidate(yaml, options);
     absl::Status creation_status = absl::OkStatus();
     auto factory = std::make_unique<TestActiveQuicListenerFactory>(
-        options, /*concurrency=*/1, quic_stat_names_, validation_visitor_, context_,
-        creation_status);
+        options, , quic_stat_names_, validation_visitor_, context_, creation_status);
     EXPECT_OK(creation_status);
     return factory;
   }
@@ -768,8 +767,7 @@ protected:
   createQuicListenerFactory(envoy::config::listener::v3::QuicProtocolOptions options) {
     absl::Status creation_status = absl::OkStatus();
     auto factory = std::make_unique<ActiveQuicListenerFactory>(
-        options, /*concurrency=*/1, quic_stat_names_, validation_visitor_, listener_context_,
-        creation_status);
+        options, , quic_stat_names_, validation_visitor_, listener_context_, creation_status);
     EXPECT_OK(creation_status);
     return factory;
   }
@@ -801,11 +799,13 @@ TEST_F(ActiveQuicListenerFactoryTest, DebugVisitorConfigured) {
 
 class ActiveQuicListenerFactoryCidGeneratorInitTest : public ActiveQuicListenerFactoryTest {
 protected:
-  ActiveQuicListenerFactoryCidGeneratorInitTest() : registration_(config_factory_) {}
+  ActiveQuicListenerFactoryCidGeneratorInitTest() : registration_(config_factory_) {
+    listener_context_.server_factory_context_.options_.concurrency_ = 2;
+  }
 
-  void SetUp() override { factory_ = makeFactory(concurrency_); }
+  void SetUp() override { factory_ = makeFactory(); }
 
-  std::unique_ptr<ActiveQuicListenerFactory> makeFactory(uint32_t concurrency) {
+  std::unique_ptr<ActiveQuicListenerFactory> makeFactory() {
     envoy::config::listener::v3::QuicProtocolOptions options;
     options.mutable_connection_id_generator_config()->set_name(
         "envoy.quic.mock_connection_id_generator");
@@ -815,8 +815,7 @@ protected:
 
     absl::Status creation_status = absl::OkStatus();
     auto factory = std::make_unique<ActiveQuicListenerFactory>(
-        options, concurrency, quic_stat_names_, validation_visitor_, listener_context_,
-        creation_status);
+        options, quic_stat_names_, validation_visitor_, listener_context_, creation_status);
     EXPECT_OK(creation_status);
     return factory;
   }
@@ -827,9 +826,9 @@ protected:
           auto result = std::make_unique<StrictMock<MockEnvoyQuicConnectionIdGeneratorFactory>>();
           cid_generator_factory_ = result.get();
 
-          EXPECT_CALL(*cid_generator_factory_, createCompatibleLinuxBpfSocketOption(2u))
+          EXPECT_CALL(*cid_generator_factory_, createCompatibleLinuxBpfSocketOption())
               .WillOnce(Return(option));
-          EXPECT_CALL(*cid_generator_factory_, getCompatibleConnectionIdWorkerSelector(2u))
+          EXPECT_CALL(*cid_generator_factory_, getCompatibleConnectionIdWorkerSelector())
               .WillOnce(Return(default_cid_worker_selector_));
 
           return result;

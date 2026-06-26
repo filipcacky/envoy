@@ -68,15 +68,16 @@ public:
   // EnvoyQuicConnectionIdGeneratorFactory.
   QuicConnectionIdGeneratorPtr createQuicConnectionIdGenerator(uint32_t worker_index) override;
   absl::StatusOr<Network::Socket::OptionConstSharedPtr>
-  createCompatibleLinuxBpfSocketOption(uint32_t concurrency) override;
-  QuicConnectionIdWorkerSelector
-  getCompatibleConnectionIdWorkerSelector(uint32_t concurrency) override;
+  createCompatibleLinuxBpfSocketOption() override;
+  QuicConnectionIdWorkerSelector getCompatibleConnectionIdWorkerSelector() override;
 
 private:
-  Factory(const envoy::extensions::quic::connection_id_generator::quic_lb::v3::Config& config);
+  Factory(const envoy::extensions::quic::connection_id_generator::quic_lb::v3::Config& config,
+          uint32_t concurrency);
   absl::Status updateSecret(Api::Api& api);
 
   const envoy::extensions::quic::connection_id_generator::quic_lb::v3::Config config_;
+  const uint32_t concurrency_;
   Secret::GenericSecretConfigProviderSharedPtr secrets_provider_;
   Common::CallbackHandlePtr secrets_provider_validation_callback_handle_;
   Common::CallbackHandlePtr secrets_provider_update_callback_handle_;

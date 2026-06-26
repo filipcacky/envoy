@@ -106,9 +106,9 @@ MATCHER_P2(FactoryFunctionsReturnWorkerId, packet, expected_id, "") {
 FactoryFunctions::FactoryFunctions(EnvoyQuicConnectionIdGeneratorFactory& factory,
                                    uint32_t concurrency)
     : concurrency_(concurrency),
-      worker_selector_(factory.getCompatibleConnectionIdWorkerSelector(concurrency_)) {
+      worker_selector_(factory.getCompatibleConnectionIdWorkerSelector()) {
 #ifdef SUPPORTS_TESTING_BPF_PROG
-  opt_ = factory.createCompatibleLinuxBpfSocketOption(concurrency).value();
+  opt_ = factory.createCompatibleLinuxBpfSocketOption().value();
   // Using a mock socket to capture the socket option which otherwise cannot be
   // extracted from the private field in the Socket::Option.
   Network::MockListenSocket mock_socket;

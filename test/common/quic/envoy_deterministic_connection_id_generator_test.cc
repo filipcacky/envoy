@@ -87,37 +87,43 @@ TEST_F(EnvoyDeterministicConnectionIdGeneratorTest, NextConnectionIdPersistsWork
   }
 }
 
-class EnvoyDeterministicConnectionIdGeneratorFactoryTest : public ::testing::Test {
+class EnvoyDeterministicConnectionIdGeneratorFactoryTest
+    : public ::testing::TestWithParam<uint32_t> {
 protected:
+  EnvoyDeterministicConnectionIdGeneratorFactoryTest() : factory_(GetParam()) {}
   EnvoyDeterministicConnectionIdGeneratorFactory factory_;
 };
+
+INSTANTIATE_TEST_SUITE_P(Concurrencies, EnvoyDeterministicConnectionIdGeneratorFactoryTest,
+                         ::testing::Values(256u, 65536u),
+                         [](const testing::TestParamInfo<uint32_t>& info) {
+                           return absl::StrCat("Concurrency", info.param);
+                         });
 
 TEST_F(EnvoyDeterministicConnectionIdGeneratorFactoryTest,
        ConnectionIdWorkerSelectorReturnsCurrentWorkerForShortHeaderPacketsTooShort) {
   Buffer::OwnedImpl buffer("aaaaaa");
-  EXPECT_THAT(FactoryFunctions(factory_, 256), GivenPacket(buffer).ReturnsDefaultWorkerId());
-  EXPECT_THAT(FactoryFunctions(factory_, 65536), GivenPacket(buffer).ReturnsDefaultWorkerId());
+  EXPECT_THAT(FactoryFunctions(factory_, GetParam()), GivenPacket(buffer).ReturnsDefaultWorkerId());
 }
 
 TEST_F(EnvoyDeterministicConnectionIdGeneratorFactoryTest,
        ConnectionIdWorkerSelectorReturnsCurrentWorkerForLongHeaderPacketsTooShort) {
   Buffer::OwnedImpl buffer("\x80xxxxxxxxxxx");
-  EXPECT_THAT(FactoryFunctions(factory_, 256), GivenPacket(buffer).ReturnsDefaultWorkerId());
-  EXPECT_THAT(FactoryFunctions(factory_, 65536), GivenPacket(buffer).ReturnsDefaultWorkerId());
+  EXPECT_THAT(FactoryFunctions(factory_, GetParam()), GivenPacket(buffer).ReturnsDefaultWorkerId());
 }
 
 TEST_F(EnvoyDeterministicConnectionIdGeneratorFactoryTest,
        ConnectionIdWorkerSelectorReturnsBytesOneToFourModConcurrencyForShortPackets) {
   Buffer::OwnedImpl buffer("x\x12\x34\x56\x78xxxxxxxxx");
-  EXPECT_THAT(FactoryFunctions(factory_, 256), GivenPacket(buffer).ReturnsWorkerId(0x78));
-  EXPECT_THAT(FactoryFunctions(factory_, 65536), GivenPacket(buffer).ReturnsWorkerId(0x5678));
+  EXPECT_THAT(FactoryFunctions(factory_, GetParam()),
+              GivenPacket(buffer).ReturnsWorkerId(0x12345678 % GetParam()));
 }
 
 TEST_F(EnvoyDeterministicConnectionIdGeneratorFactoryTest,
        ConnectionIdWorkerSelectorReturnsBytesSixToNineModConcurrencyForLongPackets) {
   Buffer::OwnedImpl buffer("\x80xxxxx\x12\x34\x56\x78xxxxxxxxx");
-  EXPECT_THAT(FactoryFunctions(factory_, 256), GivenPacket(buffer).ReturnsWorkerId(0x78));
-  EXPECT_THAT(FactoryFunctions(factory_, 65536), GivenPacket(buffer).ReturnsWorkerId(0x5678));
+  EXPECT_THAT(FactoryFunctions(factory_, GetParam()),
+              GivenPacket(buffer).ReturnsWorkerId(0x12345678 % GetParam()));
 }
 
 } // namespace Deterministic

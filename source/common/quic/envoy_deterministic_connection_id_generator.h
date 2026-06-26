@@ -30,14 +30,17 @@ public:
 class EnvoyDeterministicConnectionIdGeneratorFactory
     : public EnvoyQuicConnectionIdGeneratorFactory {
 public:
+  explicit EnvoyDeterministicConnectionIdGeneratorFactory(uint32_t concurrency)
+      : concurrency_(concurrency) {}
+
   // EnvoyQuicConnectionIdGeneratorFactory.
   QuicConnectionIdGeneratorPtr createQuicConnectionIdGenerator(uint32_t worker_index) override;
   absl::StatusOr<Network::Socket::OptionConstSharedPtr>
-  createCompatibleLinuxBpfSocketOption(uint32_t concurrency) override;
-  QuicConnectionIdWorkerSelector
-  getCompatibleConnectionIdWorkerSelector(uint32_t concurrency) override;
+  createCompatibleLinuxBpfSocketOption() override;
+  QuicConnectionIdWorkerSelector getCompatibleConnectionIdWorkerSelector() override;
 
 private:
+  const uint32_t concurrency_;
 #if defined(SO_ATTACH_REUSEPORT_CBPF) && defined(__linux__)
   sock_fprog prog_;
   std::vector<sock_filter> filter_;

@@ -92,7 +92,6 @@ public:
   testing::NiceMock<MockDrainManager> drain_manager_;
   testing::NiceMock<AccessLog::MockAccessLogManager> access_log_manager_;
   testing::NiceMock<MockHotRestart> hot_restart_;
-  testing::NiceMock<MockOptions> options_;
   testing::NiceMock<MockServerLifecycleNotifier> lifecycle_notifier_;
   testing::NiceMock<LocalInfo::MockLocalInfo> local_info_;
   testing::NiceMock<Init::MockManager> init_manager_;
@@ -109,6 +108,7 @@ public:
   std::shared_ptr<testing::NiceMock<Configuration::MockStatsConfig>> stats_config_;
   std::shared_ptr<testing::NiceMock<Configuration::MockServerFactoryContext>>
       server_factory_context_;
+  testing::NiceMock<MockOptions>& options_{server_factory_context_->options_};
   std::shared_ptr<testing::NiceMock<Configuration::MockTransportSocketFactoryContext>>
       transport_socket_factory_context_;
   Extensions::TransportSockets::Tls::ContextManagerImpl ssl_context_manager_;

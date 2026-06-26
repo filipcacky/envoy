@@ -310,14 +310,14 @@ void ActiveQuicListener::onCloseIdleHttpConnections(bool is_saturated) {
 }
 
 ActiveQuicListenerFactory::ActiveQuicListenerFactory(
-    const envoy::config::listener::v3::QuicProtocolOptions& config, uint32_t concurrency,
-    QuicStatNames& quic_stat_names, ProtobufMessage::ValidationVisitor& validation_visitor,
+    const envoy::config::listener::v3::QuicProtocolOptions& config, QuicStatNames& quic_stat_names,
+    ProtobufMessage::ValidationVisitor& validation_visitor,
     Server::Configuration::ListenerFactoryContext& context, absl::Status& creation_status)
-    : concurrency_(concurrency), enabled_(config.enabled()), quic_stat_names_(quic_stat_names),
+    : context_(context), enabled_(config.enabled()), quic_stat_names_(quic_stat_names),
       packets_to_read_to_connection_count_ratio_(
           PROTOBUF_GET_WRAPPED_OR_DEFAULT(config, packets_to_read_to_connection_count_ratio,
                                           DEFAULT_PACKETS_TO_READ_PER_CONNECTION)),
-      context_(context), reject_new_connections_(config.reject_new_connections()) {
+      reject_new_connections_(config.reject_new_connections()) {
   const int64_t idle_network_timeout_ms =
       config.has_idle_timeout() ? DurationUtil::durationToMilliseconds(config.idle_timeout())
                                 : 300000;
@@ -414,7 +414,7 @@ absl::Status ActiveQuicListenerFactory::initializeSocketDependentState(
   RETURN_IF_NOT_OK(initializeCidGeneratorAndWorkerRouting());
 
   for (const auto& factory : socket_factories) {
-    for (uint32_t i = 0; i < concurrency_; i++) {
+    for (uint32_t i = 0; i < context_.serverFactoryContext().options().concurrency(); i++) {
       auto socket = factory->getListenSocket(i);
       if (!Network::Socket::applyOptions(options_, *socket,
                                          envoy::config::core::v3::SocketOption::STATE_BOUND)) {
@@ -470,8 +470,8 @@ Network::ConnectionHandler::ActiveUdpListenerPtr ActiveQuicListenerFactory::crea
   }
 
   return createActiveQuicListener(
-      runtime, worker_index, concurrency_, dispatcher, parent, std::move(listen_socket_ptr), config,
-      quic_config_, kernel_worker_routing_, enabled_, quic_stat_names_,
+      runtime, worker_index, dispatcher, parent, std::move(listen_socket_ptr), config, quic_config_,
+      kernel_worker_routing_, enabled_, quic_stat_names_,
       packets_to_read_to_connection_count_ratio_, crypto_server_stream_factory_.value(),
       proof_source_factory_.value(),
       quic_cid_generator_factory_->createQuicConnectionIdGenerator(worker_index));
@@ -479,12 +479,11 @@ Network::ConnectionHandler::ActiveUdpListenerPtr ActiveQuicListenerFactory::crea
 
 Network::ConnectionHandler::ActiveUdpListenerPtr
 ActiveQuicListenerFactory::createActiveQuicListener(
-    Runtime::Loader& runtime, uint32_t worker_index, uint32_t concurrency,
-    Event::Dispatcher& dispatcher, Network::UdpConnectionHandler& parent,
-    Network::SocketSharedPtr&& listen_socket, Network::ListenerConfig& listener_config,
-    const quic::QuicConfig& quic_config, bool kernel_worker_routing,
-    const envoy::config::core::v3::RuntimeFeatureFlag& enabled, QuicStatNames& quic_stat_names,
-    uint32_t packets_to_read_to_connection_count_ratio,
+    Runtime::Loader& runtime, uint32_t worker_index, Event::Dispatcher& dispatcher,
+    Network::UdpConnectionHandler& parent, Network::SocketSharedPtr&& listen_socket,
+    Network::ListenerConfig& listener_config, const quic::QuicConfig& quic_config,
+    bool kernel_worker_routing, const envoy::config::core::v3::RuntimeFeatureFlag& enabled,
+    QuicStatNames& quic_stat_names, uint32_t packets_to_read_to_connection_count_ratio,
     EnvoyQuicCryptoServerStreamFactoryInterface& crypto_server_stream_factory,
     EnvoyQuicProofSourceFactoryInterface& proof_source_factory,
     QuicConnectionIdGeneratorPtr&& cid_generator) {
@@ -497,12 +496,12 @@ ActiveQuicListenerFactory::createActiveQuicListener(
     }
   }
   return std::make_unique<ActiveQuicListener>(
-      runtime, worker_index, concurrency, dispatcher, parent, std::move(listen_socket),
-      listener_config, quic_config, kernel_worker_routing, enabled, quic_stat_names,
-      packets_to_read_to_connection_count_ratio, crypto_server_stream_factory, proof_source_factory,
-      std::move(cid_generator), worker_selector_,
-      makeOptRefFromPtr(connection_debug_visitor_factory_.get()), reject_new_connections_,
-      enable_session_idle_list);
+      runtime, worker_index, context_.serverFactoryContext().options().concurrency(), dispatcher,
+      parent, std::move(listen_socket), listener_config, quic_config, kernel_worker_routing,
+      enabled, quic_stat_names, packets_to_read_to_connection_count_ratio,
+      crypto_server_stream_factory, proof_source_factory, std::move(cid_generator),
+      worker_selector_, makeOptRefFromPtr(connection_debug_visitor_factory_.get()),
+      reject_new_connections_, enable_session_idle_list);
 }
 
 absl::Status ActiveQuicListenerFactory::initializeCidGeneratorAndWorkerRouting() {
@@ -515,13 +514,12 @@ absl::Status ActiveQuicListenerFactory::initializeCidGeneratorAndWorkerRouting()
           cid_generator_config_, context_.messageValidationVisitor(), cid_generator_config_factory),
       context_.messageValidationVisitor(), context_);
 
-  worker_selector_ =
-      quic_cid_generator_factory_->getCompatibleConnectionIdWorkerSelector(concurrency_);
+  worker_selector_ = quic_cid_generator_factory_->getCompatibleConnectionIdWorkerSelector();
 
   if (!disable_kernel_bpf_packet_routing_for_test_) {
-    if (concurrency_ > 1) {
+    if (context_.serverFactoryContext().options().concurrency() > 1) {
       absl::StatusOr<Network::Socket::OptionConstSharedPtr> option =
-          quic_cid_generator_factory_->createCompatibleLinuxBpfSocketOption(concurrency_);
+          quic_cid_generator_factory_->createCompatibleLinuxBpfSocketOption();
       if (option.ok()) {
         kernel_worker_routing_ = true;
         ASSERT(option.value() != nullptr);

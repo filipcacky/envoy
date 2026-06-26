@@ -50,8 +50,7 @@ EnvoyDeterministicConnectionIdGeneratorFactory::createQuicConnectionIdGenerator(
 }
 
 absl::StatusOr<Network::Socket::OptionConstSharedPtr>
-EnvoyDeterministicConnectionIdGeneratorFactory::createCompatibleLinuxBpfSocketOption(
-    uint32_t concurrency) {
+EnvoyDeterministicConnectionIdGeneratorFactory::createCompatibleLinuxBpfSocketOption() {
 #if defined(SO_ATTACH_REUSEPORT_CBPF) && defined(__linux__)
   // This BPF filter reads the 1st word of QUIC connection id in the UDP payload and mods it by the
   // number of workers to get the socket index in the SO_REUSEPORT socket groups. QUIC packets
@@ -79,8 +78,8 @@ EnvoyDeterministicConnectionIdGeneratorFactory::createCompatibleLinuxBpfSocketOp
       {0x05, 0, 0, 0x00000001}, //                   ja return
       {0x20, 0, 0,              // packet_too_short: ld rxhash
        static_cast<uint32_t>(SKF_AD_OFF + SKF_AD_RXHASH)},
-      {0x94, 0, 0, concurrency}, // return:         mod #socket_count
-      {0x16, 0, 0, 0000000000},  //                 ret a
+      {0x94, 0, 0, concurrency_}, // return:         mod #socket_count
+      {0x16, 0, 0, 0000000000},   //                 ret a
   };
   // SPELLCHECKER(on)
 
@@ -92,7 +91,6 @@ EnvoyDeterministicConnectionIdGeneratorFactory::createCompatibleLinuxBpfSocketOp
       envoy::config::core::v3::SocketOption::STATE_BOUND, ENVOY_ATTACH_REUSEPORT_CBPF,
       absl::string_view(reinterpret_cast<char*>(&prog_), sizeof(prog_)));
 #else
-  UNREFERENCED_PARAMETER(concurrency);
   return absl::UnimplementedError("BPF packet routing is not implemented on this platform");
 #endif
 }
@@ -130,9 +128,8 @@ static uint32_t bpfEquivalentFunction(const Buffer::Instance& packet, uint32_t c
 }
 
 QuicConnectionIdWorkerSelector
-EnvoyDeterministicConnectionIdGeneratorFactory::getCompatibleConnectionIdWorkerSelector(
-    uint32_t concurrency) {
-  return [concurrency](const Buffer::Instance& packet, uint32_t default_value) {
+EnvoyDeterministicConnectionIdGeneratorFactory::getCompatibleConnectionIdWorkerSelector() {
+  return [concurrency = concurrency_](const Buffer::Instance& packet, uint32_t default_value) {
     return bpfEquivalentFunction(packet, concurrency, default_value);
   };
 }

@@ -56,7 +56,7 @@ class KernelBpfTester {
 public:
   static absl::StatusOr<KernelBpfTester> create(uint32_t concurrency,
                                                 EnvoyQuicConnectionIdGeneratorFactory& factory) {
-    auto opt_or_error = factory.createCompatibleLinuxBpfSocketOption(concurrency);
+    auto opt_or_error = factory.createCompatibleLinuxBpfSocketOption();
     RETURN_IF_NOT_OK_REF(opt_or_error.status());
     return KernelBpfTester(concurrency, std::move(opt_or_error.value()));
   }
@@ -355,16 +355,18 @@ TEST(QuicLbTest, WorkerSelector) {
   cfg.mutable_encryption_parameters()->set_name(kSecretName);
 
   testing::NiceMock<Server::Configuration::MockFactoryContext> factory_context;
+  constexpr uint32_t concurrency = 8;
+  factory_context.server_factory_context_.options_.concurrency_ = concurrency;
 
   auto status = factory_context.server_factory_context_.secretManager().addStaticSecret(
       encryptionParamaters(0));
   absl::StatusOr<std::unique_ptr<Factory>> factory_or_status =
       Factory::create(cfg, factory_context);
-  constexpr uint32_t concurrency = 8;
+  ASSERT_OK(factory_or_status.status());
   QuicConnectionIdWorkerSelector selector =
-      factory_or_status.value()->getCompatibleConnectionIdWorkerSelector(concurrency);
+      factory_or_status.value()->getCompatibleConnectionIdWorkerSelector();
 
-  auto bpf_tester = KernelBpfTester::create(concurrency, *factory);
+  auto bpf_tester = KernelBpfTester::create(concurrency, *factory_or_status.value());
   if (absl::IsUnimplemented(bpf_tester.status())) {
     ENVOY_LOG_MISC(error, "Cannot test BPF filter on this OS/kernel");
   } else {
