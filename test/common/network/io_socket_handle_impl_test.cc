@@ -305,19 +305,21 @@ TEST_P(IoSocketHandleImplTest, InterfaceNameForLoopback) {
   }
 }
 
+using SocketIpPairParam = std::tuple<Socket::Type, Address::IpVersion, Address::IpVersion>;
+
 // Real-syscall tests parameterized on (client IP version, server IP version). In cross-family
 // combinations the v6 end is dual-stack (IPV6_V6ONLY=0) and traffic crosses as v4-mapped-v6.
-class UdpIoSocketHandleImplIpVersionPairTest
-    : public testing::TestWithParam<std::tuple<Address::IpVersion, Address::IpVersion>> {
+class IoSocketHandleImplIpVersionPairTest : public testing::TestWithParam<SocketIpPairParam> {
 public:
-  static std::string paramsToString(
-      const testing::TestParamInfo<std::tuple<Address::IpVersion, Address::IpVersion>>& params) {
-    return absl::StrCat(Network::Test::addressVersionAsString(std::get<0>(params.param)), "_to_",
-                        Network::Test::addressVersionAsString(std::get<1>(params.param)));
+  static std::string paramsToString(const testing::TestParamInfo<SocketIpPairParam>& params) {
+    const auto type = std::get<0>(params.param) == Socket::Type::Stream ? "TCP" : "UDP";
+
+    return absl::StrCat(type, "_", Network::Test::addressVersionAsString(std::get<1>(params.param)),
+                        "_to_", Network::Test::addressVersionAsString(std::get<2>(params.param)));
   }
 
   void SetUp() override {
-    auto server_or = createIoHandle(serverVersion(), createServerAddress());
+    auto server_or = createIoHandle(socketType(), serverVersion(), createServerAddress());
     ASSERT_OK(server_or.status());
     server_ = std::move(*server_or);
 
@@ -325,7 +327,8 @@ public:
     ASSERT_OK(server_address);
     server_address_ = getDestAddress(*server_address);
 
-    auto client_or = createIoHandle(clientVersion(), Network::Test::getAnyAddress(clientVersion()));
+    auto client_or = createIoHandle(socketType(), clientVersion(),
+                                    Network::Test::getAnyAddress(clientVersion()));
     ASSERT_OK(client_or);
     client_ = std::move(*client_or);
 
@@ -335,8 +338,9 @@ public:
     client_address_ = *client_address;
   }
 
-  Address::IpVersion clientVersion() const { return std::get<0>(GetParam()); }
-  Address::IpVersion serverVersion() const { return std::get<1>(GetParam()); }
+  Socket::Type socketType() const { return std::get<0>(GetParam()); }
+  Address::IpVersion clientVersion() const { return std::get<1>(GetParam()); }
+  Address::IpVersion serverVersion() const { return std::get<2>(GetParam()); }
   bool crossFamily() const { return clientVersion() != serverVersion(); }
 
   Address::InstanceConstSharedPtr createServerAddress() const {
@@ -358,10 +362,11 @@ public:
     return crossFamily() ? Address::IpVersion::v4 : clientVersion();
   }
 
-  static absl::StatusOr<IoHandlePtr> createIoHandle(Address::IpVersion ip_version,
+  static absl::StatusOr<IoHandlePtr> createIoHandle(Socket::Type type,
+                                                    Address::IpVersion ip_version,
                                                     Address::InstanceConstSharedPtr address) {
-    auto io_handle = Network::SocketInterfaceSingleton::get().socket(
-        Socket::Type::Datagram, Address::Type::Ip, ip_version, false, {});
+    auto io_handle = Network::SocketInterfaceSingleton::get().socket(type, Address::Type::Ip,
+                                                                     ip_version, false, {});
     const auto block_result = io_handle->setBlocking(true);
     if (block_result.return_value_ != 0) {
       return absl::ErrnoToStatus(block_result.errno_, "setBlocking");
@@ -381,13 +386,15 @@ public:
   Address::InstanceConstSharedPtr client_address_;
 };
 
+using UdpIoSocketHandleImpl = IoSocketHandleImplIpVersionPairTest;
 INSTANTIATE_TEST_SUITE_P(
-    IpVersionPairs, UdpIoSocketHandleImplIpVersionPairTest,
-    testing::Combine(testing::ValuesIn(TestEnvironment::getIpVersionsForTest()),
+    IpVersionPairs, UdpIoSocketHandleImpl,
+    testing::Combine(testing::ValuesIn({Socket::Type::Datagram}),
+                     testing::ValuesIn(TestEnvironment::getIpVersionsForTest()),
                      testing::ValuesIn(TestEnvironment::getIpVersionsForTest())),
-    UdpIoSocketHandleImplIpVersionPairTest::paramsToString);
+    IoSocketHandleImplIpVersionPairTest::paramsToString);
 
-TEST_P(UdpIoSocketHandleImplIpVersionPairTest, UdpConnectWritevRecvmsg) {
+TEST_P(UdpIoSocketHandleImpl, ConnectWritevRecvmsg) {
   DISABLE_UNDER_WINDOWS;
 
   const auto connect_result = client_->connect(server_address_);
@@ -413,7 +420,7 @@ TEST_P(UdpIoSocketHandleImplIpVersionPairTest, UdpConnectWritevRecvmsg) {
   EXPECT_EQ(expectedPeerVersion(), output.msg_[0].peer_address_->ip()->version());
 }
 
-TEST_P(UdpIoSocketHandleImplIpVersionPairTest, UdpSendmsgRecvmsg) {
+TEST_P(UdpIoSocketHandleImpl, SendmsgRecvmsg) {
   DISABLE_UNDER_WINDOWS;
 
   std::string payload("payload");
@@ -430,6 +437,28 @@ TEST_P(UdpIoSocketHandleImplIpVersionPairTest, UdpSendmsgRecvmsg) {
   const auto recv_result = server_->recvmsg(&read_slice, 1, server_address_->ip()->port(),
                                             IoHandle::UdpSaveCmsgConfig(), output);
   ASSERT_TRUE(recv_result.ok()) << recv_result.err_->getErrorDetails();
+}
+
+using TcpIoSocketHandleImpl = IoSocketHandleImplIpVersionPairTest;
+INSTANTIATE_TEST_SUITE_P(
+    IpVersionPairs, TcpIoSocketHandleImpl,
+    testing::Combine(testing::ValuesIn({Socket::Type::Stream}),
+                     testing::ValuesIn(TestEnvironment::getIpVersionsForTest()),
+                     testing::ValuesIn(TestEnvironment::getIpVersionsForTest())),
+    IoSocketHandleImplIpVersionPairTest::paramsToString);
+
+TEST_P(TcpIoSocketHandleImpl, ListenConnectAccept) {
+  const auto listen_result = server_->listen(1);
+  ASSERT_EQ(listen_result.return_value_, 0);
+
+  const auto connect_result = client_->connect(server_address_);
+  ASSERT_EQ(connect_result.return_value_, 0)
+      << errorDetails(connect_result.errno_) << " " << client_address_->asString() << " to "
+      << server_address_->asString();
+
+  sockaddr_storage addr;
+  socklen_t len = sizeof(addr);
+  auto handle = server_->accept(reinterpret_cast<sockaddr*>(&addr), &len);
 }
 
 } // namespace
