@@ -177,6 +177,9 @@ TEST(IoSocketHandleImpl, ErrnoIfaddrs) {
 }
 
 TEST(IoSocketHandleImpl, DroppedUdpDatagramsMsg) {
+#ifndef SO_RXQ_OVFL
+  GTEST_SKIP() << "This platform doesn't support SO_RXQ_OVFL cmsg type.";
+#else
   NiceMock<Envoy::Api::MockOsSysCalls> os_sys_calls;
   auto os_calls =
       std::make_unique<Envoy::TestThreadsafeSingletonInjector<Envoy::Api::OsSysCallsImpl>>(
@@ -223,9 +226,13 @@ TEST(IoSocketHandleImpl, DroppedUdpDatagramsMsg) {
   // Since the SO_RXQ_OVFL control message represents the number of dropped datagrams since socket
   // creation It's expected to see the same value after the second recvmsg call.
   EXPECT_EQ(dropped_packets, 5);
+#endif
 }
 
 TEST(IoSocketHandleImpl, DroppedUdpDatagramsMmsg) {
+#ifndef SO_RXQ_OVFL
+  GTEST_SKIP() << "This platform doesn't support SO_RXQ_OVFL cmsg type.";
+#else
   NiceMock<Envoy::Api::MockOsSysCalls> os_sys_calls;
   auto os_calls =
       std::make_unique<Envoy::TestThreadsafeSingletonInjector<Envoy::Api::OsSysCallsImpl>>(
@@ -276,6 +283,7 @@ TEST(IoSocketHandleImpl, DroppedUdpDatagramsMmsg) {
   // Since the SO_RXQ_OVFL control message represents the number of dropped datagrams since socket
   // creation It's expected to see the same value after the second recvmmsg call.
   EXPECT_EQ(dropped_packets, 5);
+#endif
 }
 
 class IoSocketHandleImplTest : public testing::TestWithParam<Network::Address::IpVersion> {};
