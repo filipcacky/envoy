@@ -49,6 +49,20 @@ constexpr int messageTruncatedOption() {
 #endif
 }
 
+sockaddr_in6 v4ToV4MappedV6(const sockaddr_in& sin4) {
+  sockaddr_in6 sin6;
+  memset(&sin6, 0, sizeof(sin6));
+  sin6.sin6_family = AF_INET6;
+  sin6.sin6_port = sin4.sin_port;
+  // Byte-wise s6_addr is the only member of in6_addr common to Linux, macOS and Windows;
+  // the 32-bit union accessors are all named differently.
+  sin6.sin6_addr.s6_addr[10] = 0xff;
+  sin6.sin6_addr.s6_addr[11] = 0xff;
+  safeMemcpyUnsafeDst(&sin6.sin6_addr.s6_addr[12], &sin4.sin_addr.s_addr);
+  ASSERT(IN6_IS_ADDR_V4MAPPED(&sin6.sin6_addr));
+  return sin6;
+}
+
 } // namespace
 
 namespace Network {
@@ -172,6 +186,21 @@ Api::IoCallUint64Result IoSocketHandleImpl::sendmsg(const Buffer::RawSlice* slic
   msghdr message;
   message.msg_name = reinterpret_cast<void*>(sock_addr);
   message.msg_namelen = address_base->sockAddrLen();
+
+#ifdef __APPLE__
+  // macOS rejects an AF_INET msg_name on an AF_INET6 fd with EINVAL even when the socket
+  // is dual-stack. When sending to an IPv4 destination on such a socket, swap msg_name for
+  // the v4-mapped sockaddr_in6 form. Linux needs no conversion: udpv6_sendmsg() accepts
+  // both an AF_INET msg_name and a v4-mapped AF_INET6 one on a dual-stack socket and
+  // routes either down the IPv4 send path.
+  sockaddr_in6 mapped_sock_addr;
+  if (domain_ == AF_INET6 && sock_addr->sa_family == AF_INET) {
+    mapped_sock_addr = v4ToV4MappedV6(reinterpret_cast<const sockaddr_in&>(*sock_addr));
+    message.msg_name = &mapped_sock_addr;
+    message.msg_namelen = sizeof(mapped_sock_addr);
+  }
+#endif
+
   message.msg_iov = iov.begin();
   message.msg_iovlen = num_slices_to_write;
   message.msg_flags = 0;
@@ -556,29 +585,19 @@ IoHandlePtr IoSocketHandleImpl::accept(struct sockaddr* addr, socklen_t* addrlen
 Api::SysCallIntResult IoSocketHandleImpl::connect(Address::InstanceConstSharedPtr address) {
   auto sockaddr_to_use = address->sockAddr();
   auto sockaddr_len_to_use = address->sockAddrLen();
-#if defined(__APPLE__) || defined(__ANDROID_API__)
   sockaddr_in6 sin6;
-  if (sockaddr_to_use->sa_family == AF_INET && Address::forceV6()) {
-    const sockaddr_in& sin4 = reinterpret_cast<const sockaddr_in&>(*sockaddr_to_use);
-
+  if (sockaddr_to_use->sa_family == AF_INET && (Address::forceV6() || domain_ == AF_INET6)) {
     // Android always uses IPv6 dual stack. Convert IPv4 to the IPv6 mapped address when
     // connecting.
-    memset(&sin6, 0, sizeof(sin6));
-    sin6.sin6_family = AF_INET6;
-    sin6.sin6_port = sin4.sin_port;
-#if defined(__ANDROID_API__)
-    sin6.sin6_addr.s6_addr32[2] = htonl(0xffff);
-    sin6.sin6_addr.s6_addr32[3] = sin4.sin_addr.s_addr;
-#elif defined(__APPLE__)
-    sin6.sin6_addr.__u6_addr.__u6_addr32[2] = htonl(0xffff);
-    sin6.sin6_addr.__u6_addr.__u6_addr32[3] = sin4.sin_addr.s_addr;
-#endif
-    ASSERT(IN6_IS_ADDR_V4MAPPED(&sin6.sin6_addr));
-
+    //
+    // For TCP, connecting an AF_INET6 fd to an AF_INET destination requires the v4-mapped
+    // sockaddr_in6 form on every platform.
+    //
+    // For UDP, Linux accepts the raw AF_INET form but macOS does not, so convert unconditionally.
+    sin6 = v4ToV4MappedV6(reinterpret_cast<const sockaddr_in&>(*sockaddr_to_use));
     sockaddr_to_use = reinterpret_cast<sockaddr*>(&sin6);
     sockaddr_len_to_use = sizeof(sin6);
   }
-#endif
 
   auto result = Api::OsSysCallsSingleton::get().connect(fd_, sockaddr_to_use, sockaddr_len_to_use);
   if (result.return_value_ != -1) {

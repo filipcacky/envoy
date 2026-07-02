@@ -358,6 +358,16 @@ public:
     return std::make_shared<Address::Ipv4Instance>("127.0.0.1", receiver_local->ip()->port());
   }
 
+  // The source address to pass to sendmsg as pktinfo. A cross-family packet must have an ipv4
+  // address as source. Non-mapped v6 source (client's wildcard bind address) is
+  // rejected by Linux with EINVAL. MacOS delivers the packet anyway.
+  Address::InstanceConstSharedPtr getSourceAddress() const {
+    if (crossFamily() && clientVersion() == Address::IpVersion::v6) {
+      return std::make_shared<Address::Ipv4Instance>("127.0.0.1", client_address_->ip()->port());
+    }
+    return client_address_;
+  }
+
   Address::IpVersion expectedPeerVersion() const {
     return crossFamily() ? Address::IpVersion::v4 : clientVersion();
   }
@@ -425,9 +435,10 @@ TEST_P(UdpIoSocketHandleImpl, SendmsgRecvmsg) {
 
   std::string payload("payload");
   Buffer::RawSlice slice{payload.data(), payload.size()};
-  const auto send_result = client_->sendmsg(&slice, 1, 0, client_address_->ip(), *server_address_);
+  const auto source_address = getSourceAddress();
+  const auto send_result = client_->sendmsg(&slice, 1, 0, source_address->ip(), *server_address_);
   ASSERT_TRUE(send_result.ok()) << send_result.err_->getErrorDetails() << " "
-                                << client_address_->asString() << " to "
+                                << source_address->asString() << " to "
                                 << server_address_->asString();
   ASSERT_EQ(payload.size(), send_result.return_value_);
 
