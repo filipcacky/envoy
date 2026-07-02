@@ -2,11 +2,11 @@
 #include "source/common/network/address_impl.h"
 #include "source/common/network/io_socket_error_impl.h"
 #include "source/common/network/io_socket_handle_impl.h"
-#include "source/common/network/listen_socket_impl.h"
 
 #include "test/mocks/api/mocks.h"
 #include "test/test_common/environment.h"
 #include "test/test_common/network_utility.h"
+#include "test/test_common/status_utility.h"
 #include "test/test_common/threadsafe_singleton_injector.h"
 #include "test/test_common/utility.h"
 
@@ -303,6 +303,133 @@ TEST_P(IoSocketHandleImplTest, InterfaceNameForLoopback) {
   } else {
     EXPECT_FALSE(maybe_interface_name.has_value());
   }
+}
+
+// Real-syscall tests parameterized on (client IP version, server IP version). In cross-family
+// combinations the v6 end is dual-stack (IPV6_V6ONLY=0) and traffic crosses as v4-mapped-v6.
+class UdpIoSocketHandleImplIpVersionPairTest
+    : public testing::TestWithParam<std::tuple<Address::IpVersion, Address::IpVersion>> {
+public:
+  static std::string paramsToString(
+      const testing::TestParamInfo<std::tuple<Address::IpVersion, Address::IpVersion>>& params) {
+    return absl::StrCat(Network::Test::addressVersionAsString(std::get<0>(params.param)), "_to_",
+                        Network::Test::addressVersionAsString(std::get<1>(params.param)));
+  }
+
+  void SetUp() override {
+    auto server_or = createIoHandle(serverVersion(), createServerAddress());
+    ASSERT_OK(server_or.status());
+    server_ = std::move(*server_or);
+
+    auto server_address = server_->localAddress();
+    ASSERT_OK(server_address);
+    server_address_ = getDestAddress(*server_address);
+
+    auto client_or = createIoHandle(clientVersion(), Network::Test::getAnyAddress(clientVersion()));
+    ASSERT_OK(client_or);
+    client_ = std::move(*client_or);
+
+    auto client_address = client_->localAddress();
+    ASSERT_OK(client_address);
+
+    client_address_ = *client_address;
+  }
+
+  Address::IpVersion clientVersion() const { return std::get<0>(GetParam()); }
+  Address::IpVersion serverVersion() const { return std::get<1>(GetParam()); }
+  bool crossFamily() const { return clientVersion() != serverVersion(); }
+
+  Address::InstanceConstSharedPtr createServerAddress() const {
+    if (crossFamily() && serverVersion() == Address::IpVersion::v6) {
+      return Network::Test::getAnyAddress(Address::IpVersion::v6, /*v4_compat=*/true);
+    }
+    return Network::Test::getCanonicalLoopbackAddress(serverVersion());
+  }
+
+  Address::InstanceConstSharedPtr
+  getDestAddress(const Address::InstanceConstSharedPtr& receiver_local) const {
+    if (!crossFamily()) {
+      return receiver_local;
+    }
+    return std::make_shared<Address::Ipv4Instance>("127.0.0.1", receiver_local->ip()->port());
+  }
+
+  Address::IpVersion expectedPeerVersion() const {
+    return crossFamily() ? Address::IpVersion::v4 : clientVersion();
+  }
+
+  static absl::StatusOr<IoHandlePtr> createIoHandle(Address::IpVersion ip_version,
+                                                    Address::InstanceConstSharedPtr address) {
+    auto io_handle = Network::SocketInterfaceSingleton::get().socket(
+        Socket::Type::Datagram, Address::Type::Ip, ip_version, false, {});
+    const auto block_result = io_handle->setBlocking(true);
+    if (block_result.return_value_ != 0) {
+      return absl::ErrnoToStatus(block_result.errno_, "setBlocking");
+    }
+    const auto bind_result = io_handle->bind(address);
+    if (bind_result.return_value_ != 0) {
+      return absl::ErrnoToStatus(bind_result.errno_, "bind");
+    }
+    RETURN_IF_NOT_OK(io_handle->localAddress().status());
+    return io_handle;
+  }
+
+  IoHandlePtr server_;
+  IoHandlePtr client_;
+
+  Address::InstanceConstSharedPtr server_address_;
+  Address::InstanceConstSharedPtr client_address_;
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    IpVersionPairs, UdpIoSocketHandleImplIpVersionPairTest,
+    testing::Combine(testing::ValuesIn(TestEnvironment::getIpVersionsForTest()),
+                     testing::ValuesIn(TestEnvironment::getIpVersionsForTest())),
+    UdpIoSocketHandleImplIpVersionPairTest::paramsToString);
+
+TEST_P(UdpIoSocketHandleImplIpVersionPairTest, UdpConnectWritevRecvmsg) {
+  DISABLE_UNDER_WINDOWS;
+
+  const auto connect_result = client_->connect(server_address_);
+  ASSERT_EQ(connect_result.return_value_, 0)
+      << errorDetails(connect_result.errno_) << " " << client_address_->asString() << " to "
+      << server_address_->asString();
+
+  std::string payload("payload");
+  Buffer::RawSlice slice{payload.data(), payload.size()};
+  const auto writev_result = client_->writev(&slice, 1);
+  ASSERT_TRUE(writev_result.ok()) << writev_result.err_->getErrorDetails();
+  ASSERT_EQ(payload.size(), writev_result.return_value_);
+
+  char buffer[64];
+  Buffer::RawSlice read_slice{buffer, sizeof(buffer)};
+  IoHandle::RecvMsgOutput output(1, nullptr);
+  const auto recv_result =
+      server_->recvmsg(&read_slice, 1, server_address_->ip()->port(), {}, output);
+
+  EXPECT_EQ(payload.size(), recv_result.return_value_);
+  EXPECT_EQ(payload, absl::string_view(buffer, payload.size()));
+  ASSERT_NE(output.msg_[0].peer_address_, nullptr);
+  EXPECT_EQ(expectedPeerVersion(), output.msg_[0].peer_address_->ip()->version());
+}
+
+TEST_P(UdpIoSocketHandleImplIpVersionPairTest, UdpSendmsgRecvmsg) {
+  DISABLE_UNDER_WINDOWS;
+
+  std::string payload("payload");
+  Buffer::RawSlice slice{payload.data(), payload.size()};
+  const auto send_result = client_->sendmsg(&slice, 1, 0, client_address_->ip(), *server_address_);
+  ASSERT_TRUE(send_result.ok()) << send_result.err_->getErrorDetails() << " "
+                                << client_address_->asString() << " to "
+                                << server_address_->asString();
+  ASSERT_EQ(payload.size(), send_result.return_value_);
+
+  char buffer[64];
+  Buffer::RawSlice read_slice{buffer, sizeof(buffer)};
+  IoHandle::RecvMsgOutput output(1, nullptr);
+  const auto recv_result = server_->recvmsg(&read_slice, 1, server_address_->ip()->port(),
+                                            IoHandle::UdpSaveCmsgConfig(), output);
+  ASSERT_TRUE(recv_result.ok()) << recv_result.err_->getErrorDetails();
 }
 
 } // namespace
