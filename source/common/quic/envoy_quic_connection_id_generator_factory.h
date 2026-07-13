@@ -54,6 +54,12 @@ public:
   std::string category() const override { return "envoy.quic.connection_id_generator"; }
 
   /**
+   * @returns true if this connection id generator provides stable packet routing across hot-restart
+   * epochs and LDS listener swaps, false otherwise.
+   */
+  virtual bool isStateful() const PURE;
+
+  /**
    * Returns a connection ID factory based on the given config.
    */
   virtual EnvoyQuicConnectionIdGeneratorFactoryPtr

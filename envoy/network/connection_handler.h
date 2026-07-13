@@ -330,6 +330,12 @@ public:
    */
   virtual const Network::Socket::OptionsSharedPtr& socketOptions() const PURE;
 
+  /**
+   * @return true if the packets passing through this listener are correctly routed to workers
+   * across hot-restart epochs and LDS listener swaps, false otherwise.
+   */
+  virtual bool hasStatefulPacketRouting() const PURE;
+
   virtual absl::Status initializeSocketDependentState(
       absl::Span<const Network::ListenSocketFactoryPtr> listen_socket_factories) PURE;
 };

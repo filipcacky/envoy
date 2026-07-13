@@ -15,6 +15,7 @@ class EnvoyDeterministicConnectionIdGeneratorConfigFactory
 public:
   // EnvoyQuicConnectionIdGeneratorConfigFactory.
   ProtobufTypes::MessagePtr createEmptyConfigProto() override;
+  bool isStateful() const override { return false; }
   Quic::EnvoyQuicConnectionIdGeneratorFactoryPtr
   createQuicConnectionIdGeneratorFactory(const Protobuf::Message& config,
                                          Server::Configuration::FactoryContext&) override;

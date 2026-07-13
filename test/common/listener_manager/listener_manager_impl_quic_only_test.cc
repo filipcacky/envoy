@@ -3,12 +3,17 @@
 
 #if defined(ENVOY_ENABLE_QUIC)
 #include "source/common/quic/quic_server_transport_socket_factory.h"
+
+#include "test/common/config/dummy_config.pb.h"
+#include "test/common/quic/mock_quic_connection_id_generator_factory.h"
+#include "test/test_common/registry.h"
 #endif
 
 #include "test/common/listener_manager/listener_manager_impl_test.h"
 #include "test/integration/filters/test_listener_filter.h"
 #include "test/mocks/network/mocks.h"
 #include "test/server/utility.h"
+#include "test/test_common/status_utility.h"
 #include "test/test_common/threadsafe_singleton_injector.h"
 
 namespace Envoy {
@@ -454,6 +459,137 @@ listener_filters:
   ASSERT_NE(nullptr, added_filter_state);
   EXPECT_EQ("xyz", added_filter_state->asString());
 }
+
+class ListenerManagerImplQuicStatefulRoutingTest : public ListenerManagerImplQuicOnlyTest {
+protected:
+  void SetUp() override {
+    ListenerManagerImplQuicOnlyTest::SetUp();
+    ON_CALL(config_factory_, createQuicConnectionIdGeneratorContext)
+        .WillByDefault(
+            testing::InvokeWithoutArgs([]() -> Quic::EnvoyQuicConnectionIdGeneratorContextPtr {
+              return std::make_unique<NiceMock<Quic::MockEnvoyQuicConnectionIdGeneratorContext>>();
+            }));
+
+    EXPECT_CALL(*worker_, start);
+    EXPECT_OK(manager_->startWorkers(guard_dog_, callback_.AsStdFunction()));
+  }
+
+  envoy::config::listener::v3::Listener listenerWithMockCidGenerator() {
+    envoy::config::listener::v3::Listener listener = parseListenerFromV3Yaml(getBasicConfig());
+    auto* cid_generator_config = listener.mutable_udp_listener_config()
+                                     ->mutable_quic_options()
+                                     ->mutable_connection_id_generator_config();
+    cid_generator_config->set_name("envoy.quic.mock_connection_id_generator");
+    std::ignore =
+        cid_generator_config->mutable_typed_config()->PackFrom(test::common::config::DummyConfig());
+    return listener;
+  }
+
+  envoy::config::listener::v3::Listener updatedListenerConfig() {
+    envoy::config::listener::v3::Listener listener = listenerWithMockCidGenerator();
+    // Change per_connection_buffer_limit_bytes to force listener swap instead of an inplace filter
+    // chain swap.
+    listener.mutable_per_connection_buffer_limit_bytes()->set_value(4096);
+    return listener;
+  }
+
+  void initActiveListener(bool stateful_packet_routing) {
+    config_factory_.is_stateful_ = stateful_packet_routing;
+    initial_listener_ = expectListenerCreate(true, true);
+    EXPECT_CALL(server_.api_.random_, uuid);
+    EXPECT_CALL(
+        listener_factory_,
+        createListenSocket(_, Network::Socket::Type::Datagram, _,
+                           ListenerComponentFactory::BindType::ReusePort,
+                           testing::Field(&Network::SocketCreationOptions::should_duplicate_,
+                                          !stateful_packet_routing),
+                           0));
+    EXPECT_CALL(initial_listener_->target_, initialize);
+    EXPECT_TRUE(addOrUpdateListener(listenerWithMockCidGenerator(), "v1"));
+    EXPECT_CALL(*worker_, addListener);
+    initial_listener_->target_.ready();
+    worker_->callAddCompletion();
+    ASSERT_EQ(1u, manager_->listeners().size());
+    EXPECT_EQ(stateful_packet_routing, manager_->listeners()[0]
+                                           .get()
+                                           .udpListenerConfig()
+                                           ->listenerFactory()
+                                           .hasStatefulPacketRouting());
+  }
+
+  void TearDown() override {
+    if (initial_listener_ != nullptr) {
+      EXPECT_CALL(*initial_listener_, onDestroy);
+    }
+    if (updated_listener_ != nullptr) {
+      EXPECT_CALL(*updated_listener_, onDestroy);
+    }
+  }
+
+  NiceMock<Quic::MockEnvoyQuicConnectionIdGeneratorConfigFactory> config_factory_;
+  Registry::InjectFactory<Quic::EnvoyQuicConnectionIdGeneratorConfigFactory> registration_{
+      config_factory_};
+  ListenerHandle* initial_listener_{nullptr};
+  ListenerHandle* updated_listener_{nullptr};
+};
+
+TEST_P(ListenerManagerImplQuicStatefulRoutingTest, StatefulPacketRoutingDisablesSocketDuplication) {
+  initActiveListener(/*stateful_packet_routing=*/true);
+}
+
+TEST_P(ListenerManagerImplQuicStatefulRoutingTest, StatelessPacketRoutingKeepsSocketDuplication) {
+  initActiveListener(/*stateful_packet_routing=*/false);
+}
+
+TEST_P(ListenerManagerImplQuicStatefulRoutingTest,
+       UpdateWithStatefulPacketRoutingCreatesNewSockets) {
+  initActiveListener(/*stateful_packet_routing=*/true);
+
+  NiceMock<Api::MockOsSysCalls> os_sys_calls;
+  TestThreadsafeSingletonInjector<Api::OsSysCallsImpl> os_calls_injector{&os_sys_calls};
+  ON_CALL(os_sys_calls, socket(_, _, _))
+      .WillByDefault(Invoke([this](int domain, int type, int protocol) {
+        return os_sys_calls_actual_.socket(domain, type, protocol);
+      }));
+  ON_CALL(os_sys_calls, close(_)).WillByDefault(Invoke([this](os_fd_t fd) {
+    return os_sys_calls_actual_.close(fd);
+  }));
+
+  updated_listener_ = expectListenerCreate(true, true);
+  EXPECT_CALL(server_.api_.random_, uuid);
+  EXPECT_CALL(updated_listener_->target_, initialize);
+  EXPECT_CALL(*listener_factory_.socket_, duplicate).Times(0);
+  EXPECT_CALL(listener_factory_, createListenSocket).Times(0);
+  EXPECT_TRUE(addOrUpdateListener(updatedListenerConfig(), "v2"));
+
+  ASSERT_EQ(1u, manager_->listeners(ListenerManager::WARMING).size());
+  const auto warming_socket = manager_->listeners(ListenerManager::WARMING)[0]
+                                  .get()
+                                  .listenSocketFactories()[0]
+                                  ->getListenSocket(0);
+  ASSERT_NE(nullptr, warming_socket);
+  EXPECT_NE(listener_factory_.socket_.get(), warming_socket.get());
+  EXPECT_EQ(Network::Socket::Type::Datagram, warming_socket->socketType());
+}
+
+TEST_P(ListenerManagerImplQuicStatefulRoutingTest,
+       UpdateWithStatelessPacketRoutingDuplicatesSockets) {
+  initActiveListener(/*stateful_packet_routing=*/false);
+
+  updated_listener_ = expectListenerCreate(true, true);
+  EXPECT_CALL(server_.api_.random_, uuid);
+  EXPECT_CALL(updated_listener_->target_, initialize);
+  EXPECT_CALL(*listener_factory_.socket_, duplicate);
+  EXPECT_CALL(listener_factory_, createListenSocket).Times(0);
+  EXPECT_TRUE(addOrUpdateListener(updatedListenerConfig(), "v2"));
+
+  EXPECT_EQ(1u, manager_->listeners(ListenerManager::WARMING).size());
+
+  EXPECT_CALL(*updated_listener_, onDestroy);
+}
+
+INSTANTIATE_TEST_SUITE_P(Matcher, ListenerManagerImplQuicStatefulRoutingTest,
+                         ::testing::Values(false));
 
 #endif
 

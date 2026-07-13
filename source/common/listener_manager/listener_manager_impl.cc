@@ -372,7 +372,7 @@ absl::StatusOr<Network::SocketSharedPtr> ProdListenerComponentFactory::createLis
                                  : std::string(Network::Utility::UDP_SCHEME);
   const std::string addr = absl::StrCat(scheme, address->asString());
 
-  if (bind_type != BindType::NoBind) {
+  if (bind_type != BindType::NoBind && creation_options.should_duplicate_) {
     const int fd = server_.hotRestart().duplicateParentListenSocket(
         addr, worker_index, address->networkNamespace().value_or(""));
     if (fd != -1) {
@@ -1275,6 +1275,11 @@ absl::Status ListenerManagerImpl::createListenSocketFactory(ListenerImpl& listen
   TRY_ASSERT_MAIN_THREAD {
     Network::SocketCreationOptions creation_options;
     creation_options.mptcp_enabled_ = listener.mptcpEnabled();
+    creation_options.should_duplicate_ =
+        socket_type != Network::Socket::Type::Datagram ||
+        !listener.udpListenerConfig().has_value() ||
+        !listener.udpListenerConfig()->listenerFactory().hasStatefulPacketRouting();
+
     for (std::vector<Network::Address::InstanceConstSharedPtr>::size_type i = 0;
          i < listener.addresses().size(); i++) {
       auto factory_or_error = ListenSocketFactoryImpl::create(

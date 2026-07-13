@@ -28,6 +28,8 @@ class MockEnvoyQuicConnectionIdGeneratorConfigFactory
 public:
   std::string name() const override { return "envoy.quic.mock_connection_id_generator"; }
 
+  bool isStateful() const override { return is_stateful_; }
+
   ProtobufTypes::MessagePtr createEmptyConfigProto() override {
     return std::make_unique<test::common::config::DummyConfig>();
   }
@@ -40,6 +42,8 @@ public:
               (const Protobuf::Message&, Server::Configuration::FactoryContext&,
                Network::ListenSocketFactory&),
               (override));
+
+  bool is_stateful_{false};
 };
 
 } // namespace Quic
