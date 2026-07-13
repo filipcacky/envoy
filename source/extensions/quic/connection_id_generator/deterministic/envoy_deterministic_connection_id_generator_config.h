@@ -18,6 +18,10 @@ public:
   Quic::EnvoyQuicConnectionIdGeneratorFactoryPtr
   createQuicConnectionIdGeneratorFactory(const Protobuf::Message& config,
                                          Server::Configuration::FactoryContext&) override;
+  EnvoyQuicConnectionIdGeneratorFactoryPtr
+  createQuicConnectionIdGeneratorFactoryForReuseportGroup(const Protobuf::Message& config,
+                                                          Server::Configuration::FactoryContext&,
+                                                          Network::ListenSocketFactory&) override;
   std::string name() const override { return "envoy.quic.deterministic_connection_id_generator"; }
 };
 

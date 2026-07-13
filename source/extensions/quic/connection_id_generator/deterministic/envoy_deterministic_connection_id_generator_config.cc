@@ -23,6 +23,13 @@ EnvoyDeterministicConnectionIdGeneratorConfigFactory::createQuicConnectionIdGene
       factory_context.serverFactoryContext().options().concurrency());
 }
 
+EnvoyQuicConnectionIdGeneratorFactoryPtr EnvoyDeterministicConnectionIdGeneratorConfigFactory::
+    createQuicConnectionIdGeneratorFactoryForReuseportGroup(
+        const Protobuf::Message& config, Server::Configuration::FactoryContext& context,
+        Network::ListenSocketFactory&) {
+  return createQuicConnectionIdGeneratorFactory(config, context);
+}
+
 REGISTER_FACTORY(EnvoyDeterministicConnectionIdGeneratorConfigFactory,
                  EnvoyQuicConnectionIdGeneratorConfigFactory);
 

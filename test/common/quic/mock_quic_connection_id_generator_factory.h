@@ -34,6 +34,12 @@ public:
 
   MOCK_METHOD(EnvoyQuicConnectionIdGeneratorFactoryPtr, createQuicConnectionIdGeneratorFactory,
               (const Protobuf::Message&, Server::Configuration::FactoryContext&), (override));
+
+  MOCK_METHOD(EnvoyQuicConnectionIdGeneratorFactoryPtr,
+              createQuicConnectionIdGeneratorFactoryForReuseportGroup,
+              (const Protobuf::Message&, Server::Configuration::FactoryContext&,
+               Network::ListenSocketFactory&),
+              (override));
 };
 
 } // namespace Quic

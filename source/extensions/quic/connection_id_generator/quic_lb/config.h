@@ -17,6 +17,9 @@ public:
   Quic::EnvoyQuicConnectionIdGeneratorFactoryPtr
   createQuicConnectionIdGeneratorFactory(const Protobuf::Message& config,
                                          Server::Configuration::FactoryContext& context) override;
+  EnvoyQuicConnectionIdGeneratorFactoryPtr createQuicConnectionIdGeneratorFactoryForReuseportGroup(
+      const Protobuf::Message& config, Server::Configuration::FactoryContext& context,
+      Network::ListenSocketFactory& listen_socket_factory) override;
   std::string name() const override { return "envoy.quic.connection_id_generator.quic_lb"; }
 };
 
