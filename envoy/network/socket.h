@@ -182,6 +182,13 @@ static_assert(IP_RECVDSTADDR == IP_SENDSRCADDR);
 #define ENVOY_ATTACH_REUSEPORT_CBPF Network::SocketOptionName()
 #endif
 
+#ifdef SO_ATTACH_REUSEPORT_EBPF
+#define ENVOY_ATTACH_REUSEPORT_EBPF                                                                \
+  ENVOY_MAKE_SOCKET_OPTION_NAME(SOL_SOCKET, SO_ATTACH_REUSEPORT_EBPF)
+#else
+#define ENVOY_ATTACH_REUSEPORT_EBPF Network::SocketOptionName()
+#endif
+
 #if !defined(ANDROID) && defined(__APPLE__)
 // Only include TargetConditionals after testing ANDROID as some Android builds
 // on the Mac have this header available and it's not needed unless the target
