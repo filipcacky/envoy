@@ -36,6 +36,12 @@ public:
               (const Protobuf::Message&, ProtobufMessage::ValidationVisitor&,
                Server::Configuration::FactoryContext&),
               (override));
+
+  MOCK_METHOD(absl::StatusOr<EnvoyQuicConnectionIdGeneratorFactoryPtr>,
+              createQuicConnectionIdGeneratorFactoryForReuseportGroup,
+              (const Protobuf::Message&, Server::Configuration::FactoryContext&,
+               Network::ListenSocketFactory&),
+              (override));
 };
 
 } // namespace Quic

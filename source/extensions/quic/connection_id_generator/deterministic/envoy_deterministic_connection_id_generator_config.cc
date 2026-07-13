@@ -23,6 +23,15 @@ EnvoyDeterministicConnectionIdGeneratorConfigFactory::createQuicConnectionIdGene
   return std::make_unique<EnvoyDeterministicConnectionIdGeneratorFactory>();
 }
 
+absl::StatusOr<EnvoyQuicConnectionIdGeneratorFactoryPtr>
+EnvoyDeterministicConnectionIdGeneratorConfigFactory::
+    createQuicConnectionIdGeneratorFactoryForReuseportGroup(
+        const Protobuf::Message& config, Server::Configuration::FactoryContext& context,
+        Network::ListenSocketFactory&) {
+  return createQuicConnectionIdGeneratorFactory(config, context.messageValidationVisitor(),
+                                                context);
+}
+
 REGISTER_FACTORY(EnvoyDeterministicConnectionIdGeneratorConfigFactory,
                  EnvoyQuicConnectionIdGeneratorConfigFactory);
 

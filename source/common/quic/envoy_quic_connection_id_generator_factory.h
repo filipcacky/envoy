@@ -1,6 +1,7 @@
 #pragma once
 
 #include "envoy/config/typed_config.h"
+#include "envoy/network/listener.h"
 #include "envoy/network/socket.h"
 #include "envoy/server/factory_context.h"
 
@@ -61,6 +62,14 @@ public:
   createQuicConnectionIdGeneratorFactory(const Protobuf::Message& config,
                                          ProtobufMessage::ValidationVisitor& validation_visitor,
                                          Server::Configuration::FactoryContext& context) PURE;
+
+  /**
+   * Returns a connection ID factory based on the given config.
+   */
+  virtual absl::StatusOr<EnvoyQuicConnectionIdGeneratorFactoryPtr>
+  createQuicConnectionIdGeneratorFactoryForReuseportGroup(
+      const Protobuf::Message& config, Server::Configuration::FactoryContext& context,
+      Network::ListenSocketFactory& listen_socket_factory) PURE;
 };
 
 } // namespace Quic

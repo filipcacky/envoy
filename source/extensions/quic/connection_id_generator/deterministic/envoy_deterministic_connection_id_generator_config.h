@@ -19,6 +19,10 @@ public:
   createQuicConnectionIdGeneratorFactory(const Protobuf::Message& config,
                                          ProtobufMessage::ValidationVisitor& validation_visitor,
                                          Server::Configuration::FactoryContext&) override;
+  absl::StatusOr<EnvoyQuicConnectionIdGeneratorFactoryPtr>
+  createQuicConnectionIdGeneratorFactoryForReuseportGroup(const Protobuf::Message& config,
+                                                          Server::Configuration::FactoryContext&,
+                                                          Network::ListenSocketFactory&) override;
   std::string name() const override { return "envoy.quic.deterministic_connection_id_generator"; }
 };
 

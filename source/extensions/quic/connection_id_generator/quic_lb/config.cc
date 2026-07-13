@@ -27,6 +27,17 @@ EnvoyQuicConnectionIdGeneratorFactoryPtr ConfigFactory::createQuicConnectionIdGe
   return std::move(factory_or_status.value());
 }
 
+absl::StatusOr<EnvoyQuicConnectionIdGeneratorFactoryPtr>
+ConfigFactory::createQuicConnectionIdGeneratorFactoryForReuseportGroup(
+    const Protobuf::Message& config, Server::Configuration::FactoryContext& context,
+    Network::ListenSocketFactory&) {
+  return Factory::create(
+      MessageUtil::downcastAndValidate<
+          const envoy::extensions::quic::connection_id_generator::quic_lb::v3::Config&>(
+          config, context.messageValidationVisitor()),
+      context);
+}
+
 REGISTER_FACTORY(ConfigFactory, EnvoyQuicConnectionIdGeneratorConfigFactory);
 
 } // namespace QuicLb

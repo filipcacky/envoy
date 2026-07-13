@@ -148,24 +148,38 @@ protected:
       Runtime::Loader& runtime, uint32_t worker_index, uint32_t concurrency,
       Event::Dispatcher& dispatcher, Network::UdpConnectionHandler& parent,
       Network::SocketSharedPtr&& listen_socket, Network::ListenerConfig& listener_config,
-      const quic::QuicConfig& quic_config, bool kernel_worker_routing,
+      const quic::QuicConfig& quic_config,
       const envoy::config::core::v3::RuntimeFeatureFlag& enabled, QuicStatNames& quic_stat_names,
       uint32_t packets_to_read_to_connection_count_ratio,
       EnvoyQuicCryptoServerStreamFactoryInterface& crypto_server_stream_factory,
-      EnvoyQuicProofSourceFactoryInterface& proof_source_factory,
-      QuicConnectionIdGeneratorPtr&& cid_generator);
+      EnvoyQuicProofSourceFactoryInterface& proof_source_factory);
 
 private:
   friend class ActiveQuicListenerFactoryPeer;
 
   absl::Status initializeCidGeneratorAndWorkerRouting();
 
-  std::optional<std::reference_wrapper<EnvoyQuicCryptoServerStreamFactoryInterface>>
-      crypto_server_stream_factory_;
-  std::optional<std::reference_wrapper<EnvoyQuicProofSourceFactoryInterface>> proof_source_factory_;
+  struct WorkerRoutingState {
+    EnvoyQuicConnectionIdGeneratorFactoryPtr cid_generator_factory_;
+    QuicConnectionIdWorkerSelector worker_selector_;
+    bool kernel_worker_routing_{false};
+
+    static absl::StatusOr<WorkerRoutingState> initializeReuseportGroup(
+        Server::Configuration::ListenerFactoryContext& listener_factory_context,
+        EnvoyQuicConnectionIdGeneratorConfigFactory& cid_generator_config_factory,
+        const envoy::config::core::v3::TypedExtensionConfig& cid_generator_config,
+        Network::ListenSocketFactory& socket_factory);
+  };
+
+  const WorkerRoutingState& workerRoutingState(const Network::Address::Instance& listen_address);
+
+  OptRef<EnvoyQuicCryptoServerStreamFactoryInterface> crypto_server_stream_factory_;
+  OptRef<EnvoyQuicProofSourceFactoryInterface> proof_source_factory_;
   EnvoyQuicConnectionDebugVisitorFactoryInterfacePtr connection_debug_visitor_factory_;
   envoy::config::core::v3::TypedExtensionConfig cid_generator_config_;
-  EnvoyQuicConnectionIdGeneratorFactoryPtr quic_cid_generator_factory_;
+  WorkerRoutingState legacy_worker_routing_state_;
+  // Keyed by the address of the reuseport group.
+  absl::flat_hash_map<std::string, WorkerRoutingState> reuseport_group_states_;
   EnvoyQuicServerPreferredAddressConfigPtr server_preferred_address_config_;
   quic::QuicConfig quic_config_;
   const uint32_t concurrency_;
@@ -173,8 +187,6 @@ private:
   QuicStatNames& quic_stat_names_;
   const uint32_t packets_to_read_to_connection_count_ratio_;
   const Network::Socket::OptionsSharedPtr options_{std::make_shared<Network::Socket::Options>()};
-  QuicConnectionIdWorkerSelector worker_selector_;
-  bool kernel_worker_routing_{};
   Server::Configuration::ListenerFactoryContext& context_;
   bool reject_new_connections_{};
 
