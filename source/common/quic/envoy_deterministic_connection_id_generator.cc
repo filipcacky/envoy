@@ -136,7 +136,8 @@ EnvoyDeterministicConnectionIdGeneratorFactory::getCompatibleConnectionIdWorkerS
 }
 
 EnvoyQuicConnectionIdGeneratorFactoryPtr
-EnvoyDeterministicConnectionIdGeneratorContext::createQuicConnectionIdGeneratorFactory() {
+EnvoyDeterministicConnectionIdGeneratorContext::createQuicConnectionIdGeneratorFactory(
+    Network::ListenSocketFactory&) {
   return std::make_unique<EnvoyDeterministicConnectionIdGeneratorFactory>(concurrency_);
 }
 

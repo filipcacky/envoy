@@ -25,8 +25,8 @@ public:
 
 class MockEnvoyQuicConnectionIdGeneratorContext : public EnvoyQuicConnectionIdGeneratorContext {
 public:
-  MOCK_METHOD(EnvoyQuicConnectionIdGeneratorFactoryPtr, createQuicConnectionIdGeneratorFactory, (),
-              (override));
+  MOCK_METHOD(EnvoyQuicConnectionIdGeneratorFactoryPtr, createQuicConnectionIdGeneratorFactory,
+              (Network::ListenSocketFactory&), (override));
 };
 
 class MockEnvoyQuicConnectionIdGeneratorConfigFactory

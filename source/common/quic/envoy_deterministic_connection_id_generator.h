@@ -54,7 +54,8 @@ public:
       : concurrency_(concurrency) {}
 
   // EnvoyQuicConnectionIdGeneratorContext.
-  EnvoyQuicConnectionIdGeneratorFactoryPtr createQuicConnectionIdGeneratorFactory() override;
+  EnvoyQuicConnectionIdGeneratorFactoryPtr
+  createQuicConnectionIdGeneratorFactory(Network::ListenSocketFactory&) override;
 
 private:
   const uint32_t concurrency_;

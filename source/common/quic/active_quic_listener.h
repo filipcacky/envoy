@@ -131,7 +131,6 @@ public:
                           Network::SocketSharedPtr&& listen_socket_ptr,
                           Event::Dispatcher& dispatcher, Network::ListenerConfig& config) override;
   bool isTransportConnectionless() const override { return false; }
-  const Network::Socket::OptionsSharedPtr& socketOptions() const override { return options_; }
   absl::Status doFinalPreWorkerInit(absl::Span<const Network::ListenSocketFactoryPtr>) override;
 
   static void setDisableKernelBpfPacketRoutingForTest(bool val) {
@@ -143,31 +142,36 @@ protected:
       Runtime::Loader& runtime, uint32_t worker_index, Event::Dispatcher& dispatcher,
       Network::UdpConnectionHandler& parent, Network::SocketSharedPtr&& listen_socket,
       Network::ListenerConfig& listener_config, const quic::QuicConfig& quic_config,
-      bool kernel_worker_routing, const envoy::config::core::v3::RuntimeFeatureFlag& enabled,
-      QuicStatNames& quic_stat_names, uint32_t packets_to_read_to_connection_count_ratio,
+      const envoy::config::core::v3::RuntimeFeatureFlag& enabled, QuicStatNames& quic_stat_names,
+      uint32_t packets_to_read_to_connection_count_ratio,
       EnvoyQuicCryptoServerStreamFactoryInterface& crypto_server_stream_factory,
-      EnvoyQuicProofSourceFactoryInterface& proof_source_factory,
-      QuicConnectionIdGeneratorPtr&& cid_generator);
+      EnvoyQuicProofSourceFactoryInterface& proof_source_factory);
 
   Server::Configuration::ListenerFactoryContext& context_;
 
 private:
   friend class ActiveQuicListenerFactoryPeer;
 
-  std::optional<std::reference_wrapper<EnvoyQuicCryptoServerStreamFactoryInterface>>
-      crypto_server_stream_factory_;
-  std::optional<std::reference_wrapper<EnvoyQuicProofSourceFactoryInterface>> proof_source_factory_;
+  // Per-reuseport-group state. Each group has its own connection ID generator factory.
+  struct ReuseportGroupState {
+    EnvoyQuicConnectionIdGeneratorFactoryPtr cid_generator_factory_;
+    bool kernel_worker_routing_{false};
+  };
+
+  absl::StatusOr<std::pair<ReuseportGroupState, Network::Socket::OptionsSharedPtr>>
+  createReuseportGroupState(Network::ListenSocketFactory& listen_socket_factory);
+
+  OptRef<EnvoyQuicCryptoServerStreamFactoryInterface> crypto_server_stream_factory_;
+  OptRef<EnvoyQuicProofSourceFactoryInterface> proof_source_factory_;
   EnvoyQuicConnectionDebugVisitorFactoryInterfacePtr connection_debug_visitor_factory_;
   EnvoyQuicConnectionIdGeneratorContextPtr quic_cid_generator_context_;
-  EnvoyQuicConnectionIdGeneratorFactoryPtr quic_cid_generator_factory_;
+  // Keyed by the address of the reuseport group.
+  absl::flat_hash_map<std::string, ReuseportGroupState> reuseport_group_states_;
   EnvoyQuicServerPreferredAddressConfigPtr server_preferred_address_config_;
   quic::QuicConfig quic_config_;
   envoy::config::core::v3::RuntimeFeatureFlag enabled_;
   QuicStatNames& quic_stat_names_;
   const uint32_t packets_to_read_to_connection_count_ratio_;
-  const Network::Socket::OptionsSharedPtr options_{std::make_shared<Network::Socket::Options>()};
-  QuicConnectionIdWorkerSelector worker_selector_;
-  bool kernel_worker_routing_{};
   bool reject_new_connections_{};
 
   static bool disable_kernel_bpf_packet_routing_for_test_;

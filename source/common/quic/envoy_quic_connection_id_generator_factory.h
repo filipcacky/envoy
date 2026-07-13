@@ -1,6 +1,7 @@
 #pragma once
 
 #include "envoy/config/typed_config.h"
+#include "envoy/network/listener.h"
 #include "envoy/network/socket.h"
 #include "envoy/server/factory_context.h"
 
@@ -58,8 +59,12 @@ public:
 
   /**
    * Create a connection ID generator factory. Called after the listen sockets are created.
+   * @param listen_socket_factory the reuseport group's listen socket factory. Implementations
+   *        may use it to access the group's sockets and inherited state (e.g. the reuseport
+   *        eBPF routing program) or publish state to be shared with a hot restart child.
    */
-  virtual EnvoyQuicConnectionIdGeneratorFactoryPtr createQuicConnectionIdGeneratorFactory() PURE;
+  virtual EnvoyQuicConnectionIdGeneratorFactoryPtr
+  createQuicConnectionIdGeneratorFactory(Network::ListenSocketFactory& listen_socket_factory) PURE;
 };
 
 using EnvoyQuicConnectionIdGeneratorContextPtr =

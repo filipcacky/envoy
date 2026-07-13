@@ -19,6 +19,7 @@ envoy_extension_cc_test(
     rbe_pool = "6gig",
     deps = envoy_select_enable_http3([
         "//source/extensions/quic/connection_id_generator/quic_lb:quic_lb_lib",
+        "//test/mocks/network:network_mocks",
         "//test/mocks/secret:secret_mocks",
         "//test/mocks/server:factory_context_mocks",
         "//test/test_common:status_utility_lib",

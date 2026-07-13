@@ -309,7 +309,8 @@ absl::Status Context::updateSecret(Api::Api& api) {
   return absl::OkStatus();
 }
 
-EnvoyQuicConnectionIdGeneratorFactoryPtr Context::createQuicConnectionIdGeneratorFactory() {
+EnvoyQuicConnectionIdGeneratorFactoryPtr
+Context::createQuicConnectionIdGeneratorFactory(Network::ListenSocketFactory&) {
   return std::make_unique<Factory>(*tls_slot_, concurrency_);
 }
 

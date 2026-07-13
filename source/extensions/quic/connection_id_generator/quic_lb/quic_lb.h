@@ -88,7 +88,8 @@ public:
          Server::Configuration::FactoryContext& context);
 
   // EnvoyQuicConnectionIdGeneratorContext.
-  EnvoyQuicConnectionIdGeneratorFactoryPtr createQuicConnectionIdGeneratorFactory() override;
+  EnvoyQuicConnectionIdGeneratorFactoryPtr
+  createQuicConnectionIdGeneratorFactory(Network::ListenSocketFactory&) override;
 
 private:
   Context(const envoy::extensions::quic::connection_id_generator::quic_lb::v3::Config& config,

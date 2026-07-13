@@ -1,6 +1,7 @@
 #include "source/common/network/socket_option_factory.h"
 #include "source/extensions/quic/connection_id_generator/quic_lb/quic_lb.h"
 
+#include "test/mocks/network/mocks.h"
 #include "test/mocks/secret/mocks.h"
 #include "test/mocks/server/factory_context.h"
 #include "test/test_common/network_utility.h"
@@ -282,7 +283,9 @@ TEST(QuicLbTest, Unencrypted) {
       encryptionParamaters(0));
   absl::StatusOr<std::unique_ptr<Context>> context_or_status =
       Context::create(cfg, factory_context);
-  auto factory = context_or_status.value()->createQuicConnectionIdGeneratorFactory();
+  testing::NiceMock<Network::MockListenSocketFactory> listen_socket_factory;
+  auto factory =
+      context_or_status.value()->createQuicConnectionIdGeneratorFactory(listen_socket_factory);
   auto generator = createTypedIdGenerator(dynamic_cast<Factory&>(*factory));
   auto new_cid = generator->GenerateNextConnectionId(quic::QuicConnectionId{});
   EXPECT_TRUE(new_cid.has_value());
@@ -315,7 +318,9 @@ TEST(QuicLbTest, Base64ServerId) {
       encryptionParamaters(0));
   absl::StatusOr<std::unique_ptr<Context>> context_or_status =
       Context::create(cfg, factory_context);
-  auto factory = context_or_status.value()->createQuicConnectionIdGeneratorFactory();
+  testing::NiceMock<Network::MockListenSocketFactory> listen_socket_factory;
+  auto factory =
+      context_or_status.value()->createQuicConnectionIdGeneratorFactory(listen_socket_factory);
   auto generator = createTypedIdGenerator(dynamic_cast<Factory&>(*factory));
   auto new_cid = generator->GenerateNextConnectionId(quic::QuicConnectionId{});
   EXPECT_TRUE(new_cid.has_value());
@@ -343,7 +348,9 @@ TEST(QuicLbTest, TooLong) {
       encryptionParamaters(0));
   absl::StatusOr<std::unique_ptr<Context>> context_or_status =
       Context::create(cfg, factory_context);
-  auto factory = context_or_status.value()->createQuicConnectionIdGeneratorFactory();
+  testing::NiceMock<Network::MockListenSocketFactory> listen_socket_factory;
+  auto factory =
+      context_or_status.value()->createQuicConnectionIdGeneratorFactory(listen_socket_factory);
   auto generator = createTypedIdGenerator(dynamic_cast<Factory&>(*factory));
   quic::QuicConnectionId id;
   id.set_length(21);
@@ -365,7 +372,9 @@ TEST(QuicLbTest, WorkerSelector) {
       encryptionParamaters(0));
   absl::StatusOr<std::unique_ptr<Context>> context_or_status =
       Context::create(cfg, factory_context);
-  auto factory = context_or_status.value()->createQuicConnectionIdGeneratorFactory();
+  testing::NiceMock<Network::MockListenSocketFactory> listen_socket_factory;
+  auto factory =
+      context_or_status.value()->createQuicConnectionIdGeneratorFactory(listen_socket_factory);
   QuicConnectionIdWorkerSelector selector = factory->getCompatibleConnectionIdWorkerSelector();
 
   auto bpf_tester = KernelBpfTester::create(concurrency, *factory);
