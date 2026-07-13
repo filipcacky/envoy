@@ -136,6 +136,7 @@ public:
                           Event::Dispatcher& dispatcher, Network::ListenerConfig& config) override;
   bool isTransportConnectionless() const override { return false; }
   const Network::Socket::OptionsSharedPtr& socketOptions() const override { return options_; }
+  bool hasStatefulPacketRouting() const override { return has_stateful_packet_routing_; }
   absl::Status initializeWorkerRouting(
       absl::Span<const Network::ListenSocketFactoryPtr> socket_factories) override;
 
@@ -189,6 +190,7 @@ private:
   const Network::Socket::OptionsSharedPtr options_{std::make_shared<Network::Socket::Options>()};
   Server::Configuration::ListenerFactoryContext& context_;
   bool reject_new_connections_{};
+  bool has_stateful_packet_routing_{};
 
   static bool disable_kernel_bpf_packet_routing_for_test_;
 };

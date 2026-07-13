@@ -23,9 +23,14 @@ struct SocketCreationOptions {
   // Is only valid for datagram sockets.
   size_t max_addresses_cache_size_{0};
 
+  // Whether the socket is duplicated on hot restart and LDS listener updates, as opposed to
+  // being recreated.
+  bool should_duplicate_{true};
+
   bool operator==(const SocketCreationOptions& rhs) const {
     return mptcp_enabled_ == rhs.mptcp_enabled_ &&
-           max_addresses_cache_size_ == rhs.max_addresses_cache_size_;
+           max_addresses_cache_size_ == rhs.max_addresses_cache_size_ &&
+           should_duplicate_ == rhs.should_duplicate_;
   }
 };
 

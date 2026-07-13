@@ -337,6 +337,12 @@ public:
   virtual const Network::Socket::OptionsSharedPtr& socketOptions() const PURE;
 
   /**
+   * @return true if the packets passing through this listener are correctly routed to workers
+   * across hot-restart epochs and LDS listener swaps, false otherwise.
+   */
+  virtual bool hasStatefulPacketRouting() const PURE;
+
+  /**
    * Initializes routing of UDP packets to the correct worker. Called once when a listener is added
    * or updated, after the listen sockets are created. Implementations may register init targets
    * with the listener's init manager.
