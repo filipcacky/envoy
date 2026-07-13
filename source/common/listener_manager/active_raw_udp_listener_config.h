@@ -15,6 +15,7 @@ public:
                           Network::SocketSharedPtr&& listen_socket_ptr,
                           Event::Dispatcher& disptacher, Network::ListenerConfig& config) override;
   bool isTransportConnectionless() const override { return true; }
+  bool hasStatefulPacketRouting() const override { return false; }
   absl::Status doFinalPreWorkerInit(absl::Span<const Network::ListenSocketFactoryPtr>) override {
     return absl::OkStatus();
   }

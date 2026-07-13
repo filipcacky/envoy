@@ -326,6 +326,12 @@ public:
   virtual bool isTransportConnectionless() const PURE;
 
   /**
+   * @return true if the packets passing through this listener are correctly routed to workers
+   * across hot-restart epochs and LDS listener swaps, false otherwise.
+   */
+  virtual bool hasStatefulPacketRouting() const PURE;
+
+  /**
    * Perform any initialization that must occur immediately prior to using the listen socket on
    * workers, and which requires access to listen sockets. For creating and posting eBPF programs to
    * each reuseport group.

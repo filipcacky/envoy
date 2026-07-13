@@ -28,6 +28,7 @@
 #include "source/common/network/io_socket_handle_impl.h"
 #include "source/common/network/reuse_port_bpf_cpu_steering_option_impl.h"
 #include "source/common/network/socket_interface_impl.h"
+#include "source/common/network/socket_option_factory.h"
 #include "source/common/network/utility.h"
 #include "source/common/protobuf/protobuf.h"
 #include "source/common/router/string_accessor_impl.h"
@@ -44,6 +45,7 @@
 #include "test/server/utility.h"
 #include "test/test_common/network_utility.h"
 #include "test/test_common/registry.h"
+#include "test/test_common/status_utility.h"
 #include "test/test_common/test_runtime.h"
 #include "test/test_common/threadsafe_singleton_injector.h"
 #include "test/test_common/utility.h"
@@ -691,6 +693,53 @@ TEST_P(ListenerManagerImplWithRealFiltersTest, UdpAddress) {
   EXPECT_CALL(os_sys_calls_, close(_)).WillRepeatedly(Return(Api::SysCallIntResult{0, errno}));
   addOrUpdateListener(listener_proto);
   EXPECT_EQ(1u, manager_->listeners().size());
+}
+
+TEST_P(ListenerManagerImplWithRealFiltersTest, TcpListenerSocketsShouldDuplicate) {
+  const std::string yaml = R"EOF(
+address:
+  socket_address:
+    address: 127.0.0.1
+    port_value: 1234
+filter_chains:
+- filters: []
+  name: foo
+  )EOF";
+
+  EXPECT_CALL(listener_factory_,
+              createListenSocket(
+                  _, Network::Socket::Type::Stream, _, default_bind_type,
+                  testing::Field(&Network::SocketCreationOptions::should_duplicate_, true), 0));
+  addOrUpdateListener(parseListenerFromV3Yaml(yaml));
+  EXPECT_EQ(1u, manager_->listeners().size());
+}
+
+TEST_P(ListenerManagerImplWithRealFiltersTest, RawUdpListenerSocketsShouldDuplicate) {
+  const std::string proto_text = R"EOF(
+    address: {
+      socket_address: {
+        protocol: UDP
+        address: "127.0.0.1"
+        port_value: 1234
+      }
+    }
+  )EOF";
+  envoy::config::listener::v3::Listener listener_proto;
+  EXPECT_TRUE(Protobuf::TextFormat::ParseFromString(proto_text, &listener_proto));
+
+  EXPECT_CALL(server_.api_.random_, uuid());
+  EXPECT_CALL(listener_factory_,
+              createListenSocket(
+                  _, Network::Socket::Type::Datagram, _,
+                  ListenerComponentFactory::BindType::ReusePort,
+                  testing::Field(&Network::SocketCreationOptions::should_duplicate_, true), 0));
+  addOrUpdateListener(listener_proto);
+  EXPECT_EQ(1u, manager_->listeners().size());
+  EXPECT_FALSE(manager_->listeners()[0]
+                   .get()
+                   .udpListenerConfig()
+                   ->listenerFactory()
+                   .hasStatefulPacketRouting());
 }
 
 TEST_P(ListenerManagerImplWithRealFiltersTest, AllowOnlyDefaultFilterChain) {
@@ -9645,6 +9694,59 @@ INSTANTIATE_TEST_SUITE_P(Matcher, ListenerManagerImplForInPlaceFilterChainUpdate
                          ::testing::Values(false));
 INSTANTIATE_TEST_SUITE_P(Matcher, ListenerManagerImplWithDispatcherStatsTest,
                          ::testing::Values(false));
+
+struct CreateListenSocketHotRestartCase {
+  Network::Socket::Type socket_type;
+  ListenerComponentFactory::BindType bind_type;
+  bool should_duplicate;
+  bool expect_parent_socket_query;
+};
+
+class CreateListenSocketHotRestartTest
+    : public testing::TestWithParam<CreateListenSocketHotRestartCase> {
+protected:
+  NiceMock<MockInstance> server_;
+  ProdListenerComponentFactory factory_{server_};
+};
+
+TEST_P(CreateListenSocketHotRestartTest, ParentSocketInheritance) {
+  const CreateListenSocketHotRestartCase& test_case = GetParam();
+  if (test_case.expect_parent_socket_query) {
+    EXPECT_CALL(server_.hot_restart_, duplicateParentListenSocket(_, 0, _)).WillOnce(Return(-1));
+  } else {
+    EXPECT_CALL(server_.hot_restart_, duplicateParentListenSocket(_, _, _)).Times(0);
+  }
+
+  Network::SocketCreationOptions creation_options;
+  creation_options.should_duplicate_ = test_case.should_duplicate;
+  const Network::Socket::OptionsSharedPtr options =
+      test_case.socket_type == Network::Socket::Type::Datagram
+          ? Network::SocketOptionFactory::buildReusePortOptions()
+          : nullptr;
+  const auto socket = factory_.createListenSocket(
+      Network::Test::getCanonicalLoopbackAddress(Network::Address::IpVersion::v4),
+      test_case.socket_type, options, test_case.bind_type, creation_options, 0);
+  EXPECT_OK(socket);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ProdListenerComponentFactory, CreateListenSocketHotRestartTest,
+    testing::Values(CreateListenSocketHotRestartCase{Network::Socket::Type::Stream,
+                                                     ListenerComponentFactory::BindType::ReusePort,
+                                                     /*should_duplicate=*/true,
+                                                     /*expect_parent_socket_query=*/true},
+                    CreateListenSocketHotRestartCase{Network::Socket::Type::Datagram,
+                                                     ListenerComponentFactory::BindType::ReusePort,
+                                                     /*should_duplicate=*/true,
+                                                     /*expect_parent_socket_query=*/true},
+                    CreateListenSocketHotRestartCase{Network::Socket::Type::Datagram,
+                                                     ListenerComponentFactory::BindType::ReusePort,
+                                                     /*should_duplicate=*/false,
+                                                     /*expect_parent_socket_query=*/false},
+                    CreateListenSocketHotRestartCase{Network::Socket::Type::Stream,
+                                                     ListenerComponentFactory::BindType::NoBind,
+                                                     /*should_duplicate=*/true,
+                                                     /*expect_parent_socket_query=*/false}));
 
 } // namespace
 } // namespace Server

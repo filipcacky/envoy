@@ -131,6 +131,7 @@ public:
                           Network::SocketSharedPtr&& listen_socket_ptr,
                           Event::Dispatcher& dispatcher, Network::ListenerConfig& config) override;
   bool isTransportConnectionless() const override { return false; }
+  bool hasStatefulPacketRouting() const override { return has_stateful_packet_routing_; }
   absl::Status doFinalPreWorkerInit(absl::Span<const Network::ListenSocketFactoryPtr>) override;
 
   static void setDisableKernelBpfPacketRoutingForTest(bool val) {
@@ -173,6 +174,7 @@ private:
   QuicStatNames& quic_stat_names_;
   const uint32_t packets_to_read_to_connection_count_ratio_;
   bool reject_new_connections_{};
+  bool has_stateful_packet_routing_{};
 
   static bool disable_kernel_bpf_packet_routing_for_test_;
 };

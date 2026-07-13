@@ -14,6 +14,7 @@ class ConfigFactory : public Quic::EnvoyQuicConnectionIdGeneratorConfigFactory {
 public:
   // EnvoyQuicConnectionIdGeneratorConfigFactory.
   ProtobufTypes::MessagePtr createEmptyConfigProto() override;
+  bool isStateful() const override { return false; }
   Quic::EnvoyQuicConnectionIdGeneratorContextPtr
   createQuicConnectionIdGeneratorContext(const Protobuf::Message& config,
                                          ProtobufMessage::ValidationVisitor& validation_visitor,

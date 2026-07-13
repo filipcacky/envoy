@@ -372,6 +372,7 @@ ActiveQuicListenerFactory::ActiveQuicListenerFactory(
       *Config::Utility::translateToFactoryConfig(cid_generator_config, validation_visitor,
                                                  cid_generator_config_factory),
       validation_visitor, context_);
+  has_stateful_packet_routing_ = cid_generator_config_factory.isStateful();
 
   if (config.has_server_preferred_address_config()) {
     const envoy::config::core::v3::TypedExtensionConfig& server_preferred_address_config =
