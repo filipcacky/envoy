@@ -38,6 +38,52 @@ public:
     udp_forwarding_rpc_stream_.bindDomainSocket(restart_epoch, "parent", socket_path_udp, 0);
     child_address_udp_forwarding_ = udp_forwarding_rpc_stream_.createDomainSocketAddress(
         restart_epoch + 1, "child", socket_path_udp, 0);
+    child_address_main_ =
+        main_rpc_stream_.createDomainSocketAddress(restart_epoch + 1, "child", socket_path, 0);
+  }
+  // Replays `buffer` via recvmsg, attaching `passed_fd` as SCM_RIGHTS control data if set.
+  void expectRecvmsgReplay(std::shared_ptr<std::string> buffer,
+                           std::optional<int> passed_fd = std::nullopt) {
+    EXPECT_CALL(os_sys_calls_, recvmsg(_, _, _))
+        .WillRepeatedly([buffer, passed_fd](int, msghdr* msg, int) {
+          if (buffer->empty()) {
+            return Api::SysCallSizeResult{-1, SOCKET_ERROR_AGAIN};
+          }
+          if (passed_fd.has_value()) {
+            cmsghdr* cmsg = CMSG_FIRSTHDR(msg);
+            cmsg->cmsg_level = SOL_SOCKET;
+            cmsg->cmsg_type = SCM_RIGHTS;
+            cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+            *reinterpret_cast<int*>(CMSG_DATA(cmsg)) = *passed_fd;
+            msg->msg_controllen = CMSG_SPACE(sizeof(int));
+          } else {
+            msg->msg_control = nullptr;
+            msg->msg_controllen = 0;
+          }
+          msg->msg_flags = 0;
+          RELEASE_ASSERT(msg->msg_iovlen == 1,
+                         fmt::format("recv buffer iovlen={}, expected 1", msg->msg_iovlen));
+          size_t sz = std::min(buffer->size(), msg->msg_iov[0].iov_len);
+          buffer->copy(static_cast<char*>(msg->msg_iov[0].iov_base), sz);
+          *buffer = buffer->substr(sz);
+          msg->msg_iov[0].iov_len = sz;
+          return Api::SysCallSizeResult{static_cast<ssize_t>(sz), 0};
+        });
+  }
+  // Replies to the child's next RPC with `reply`, attaching `passed_fd` as SCM_RIGHTS control
+  // data if set.
+  void expectRpcReply(const envoy::HotRestartMessage& reply,
+                      std::optional<int> passed_fd = std::nullopt) {
+    auto buffer = std::make_shared<std::string>();
+    EXPECT_CALL(os_sys_calls_, sendmsg(_, _, _)).WillOnce([buffer](int, const msghdr* msg, int) {
+      buffer->append(static_cast<char*>(msg->msg_iov[0].iov_base), msg->msg_iov[0].iov_len);
+      return Api::SysCallSizeResult{static_cast<ssize_t>(msg->msg_iov[0].iov_len), 0};
+    });
+    main_rpc_stream_.sendHotRestartMessage(child_address_main_, reply);
+    EXPECT_CALL(os_sys_calls_, sendmsg(_, _, _)).WillOnce([](int, const msghdr* msg, int) {
+      return Api::SysCallSizeResult{static_cast<ssize_t>(msg->msg_iov[0].iov_len), 0};
+    });
+    expectRecvmsgReplay(buffer, passed_fd);
   }
   // Mocks the syscall for both send and receive, performs the send, and
   // triggers the child's callback to perform the receive.
@@ -50,21 +96,7 @@ public:
           THROW_IF_NOT_OK(udp_file_ready_callback_(Event::FileReadyType::Read));
           return Api::SysCallSizeResult{static_cast<ssize_t>(msg->msg_iov[0].iov_len), 0};
         });
-    EXPECT_CALL(os_sys_calls_, recvmsg(_, _, _)).WillRepeatedly([buffer](int, msghdr* msg, int) {
-      if (buffer->empty()) {
-        return Api::SysCallSizeResult{-1, SOCKET_ERROR_AGAIN};
-      }
-      msg->msg_control = nullptr;
-      msg->msg_controllen = 0;
-      msg->msg_flags = 0;
-      RELEASE_ASSERT(msg->msg_iovlen == 1,
-                     fmt::format("recv buffer iovlen={}, expected 1", msg->msg_iovlen));
-      size_t sz = std::min(buffer->size(), msg->msg_iov[0].iov_len);
-      buffer->copy(static_cast<char*>(msg->msg_iov[0].iov_base), sz);
-      *buffer = buffer->substr(sz);
-      msg->msg_iov[0].iov_len = sz;
-      return Api::SysCallSizeResult{static_cast<ssize_t>(sz), 0};
-    });
+    expectRecvmsgReplay(buffer);
     udp_forwarding_rpc_stream_.sendHotRestartMessage(child_address_udp_forwarding_, message);
   }
   void expectParentTerminateMessages() {
@@ -75,6 +107,7 @@ public:
   Api::MockOsSysCalls& os_sys_calls_;
   Event::FileReadyCb udp_file_ready_callback_;
   sockaddr_un child_address_udp_forwarding_;
+  sockaddr_un child_address_main_;
 };
 
 class HotRestartingChildTest : public testing::Test {
@@ -275,6 +308,26 @@ TEST_F(HotRestartingChildTest, ForwardsPacketToRegisteredListenerOnMatch) {
               deliver(worker_index, IsUdpWith(test_listener_addr, test_remote_addr, udp_contents,
                                               packet_timestamp)));
   EXPECT_LOG_NOT_CONTAINS("error", "", fake_parent_->sendUdpForwardingMessage(msg));
+}
+
+TEST_F(HotRestartingChildTest, DuplicateParentEbpfProgramOldParentCompatibility) {
+  HotRestartMessage reply;
+  reply.set_didnt_recognize_your_last_message(true);
+  fake_parent_->expectRpcReply(reply);
+
+  EXPECT_EQ(INVALID_SOCKET,
+            hot_restarting_child_->duplicateParentEbpfProgram("udp://0.0.0.0:80", ""));
+}
+
+TEST_F(HotRestartingChildTest, DuplicateParentEbpfProgramReturnsFdFromControlData) {
+  const int parent_fd = 123;
+  const int control_data_fd = 456;
+  HotRestartMessage reply;
+  reply.mutable_reply()->mutable_pass_ebpf_program()->set_fd(parent_fd);
+  fake_parent_->expectRpcReply(reply, control_data_fd);
+
+  EXPECT_EQ(control_data_fd,
+            hot_restarting_child_->duplicateParentEbpfProgram("udp://0.0.0.0:80", ""));
 }
 
 } // namespace

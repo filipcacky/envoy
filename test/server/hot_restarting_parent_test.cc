@@ -1,6 +1,7 @@
 #include <memory>
 
 #include "source/common/network/address_impl.h"
+#include "source/common/network/reuseport_ebpf_program.h"
 #include "source/server/hot_restarting_child.h"
 #include "source/server/hot_restarting_parent.h"
 
@@ -28,6 +29,14 @@ public:
 
 class HotRestartingParentTest : public testing::Test {
 public:
+  // Creates a real fd (read end of a pipe) to stand in for an eBPF program fd.
+  static os_fd_t makeTestFd() {
+    int fds[2];
+    EXPECT_EQ(0, ::pipe(fds));
+    ::close(fds[1]);
+    return fds[0];
+  }
+
   Network::Address::InstanceConstSharedPtr ipv4_test_addr_1_ =
       Network::Utility::parseInternetAddressAndPortNoThrow("127.0.0.1:12345");
   Network::Address::InstanceConstSharedPtr ipv4_test_addr_2_ =
@@ -313,6 +322,134 @@ TEST_F(HotRestartingParentTest, GetListenSocketsForChildUnixDomainSocket) {
   request.mutable_pass_listen_socket()->set_address("unix://domain.socket");
   HotRestartMessage message = hot_restarting_parent_.getListenSocketsForChild(request);
   EXPECT_EQ(0, message.reply().pass_listen_socket().fd());
+}
+
+TEST_F(HotRestartingParentTest, GetEbpfProgramForChildNoListener) {
+  MockListenerManager listener_manager;
+  std::vector<std::reference_wrapper<Network::ListenerConfig>> listeners;
+  EXPECT_CALL(server_, listenerManager()).WillOnce(ReturnRef(listener_manager));
+  EXPECT_CALL(listener_manager, listeners(ListenerManager::ListenerState::ACTIVE))
+      .WillOnce(Return(listeners));
+
+  HotRestartMessage::Request request;
+  request.mutable_pass_ebpf_program()->set_address("udp://127.0.0.1:80");
+  HotRestartMessage message = hot_restarting_parent_.getEbpfProgramForChild(request);
+  EXPECT_EQ(INVALID_SOCKET, message.reply().pass_ebpf_program().fd());
+}
+
+struct GetEbpfProgramTestCase {
+  std::string name;
+  std::optional<std::string> listener_namespace;
+  std::string request_namespace;
+  // Whether the request address (with request_namespace applied) matches the listener address;
+  // when false the lookup stops after localAddress().
+  bool addresses_match;
+  bool bind_to_port;
+  Network::Socket::Type socket_type;
+  bool has_program;
+};
+
+class HotRestartingParentGetEbpfProgramTest
+    : public HotRestartingParentTest,
+      public testing::WithParamInterface<GetEbpfProgramTestCase> {};
+
+constexpr auto Datagram = Network::Socket::Type::Datagram;
+constexpr auto Stream = Network::Socket::Type::Stream;
+
+INSTANTIATE_TEST_SUITE_P(
+    GetEbpfProgramScenarios, HotRestartingParentGetEbpfProgramTest,
+    testing::ValuesIn<GetEbpfProgramTestCase>({
+        {"NoProgram", std::nullopt, "", true, true, Datagram, false},
+        {"HasProgram", std::nullopt, "", true, true, Datagram, true},
+        {"SocketTypeMismatch", std::nullopt, "", true, true, Stream, false},
+        {"NotBound", std::nullopt, "", true, false, Datagram, false},
+        {"NamespaceMatch", "/var/run/netns/ns1", "/var/run/netns/ns1", true, true, Datagram, true},
+        {"NamespaceMismatch", "/var/run/netns/ns1", "/var/run/netns/ns2", false, true, Datagram,
+         false},
+        {"NamespaceRequestNoNamespaceListener", std::nullopt, "/var/run/netns/ns1", false, true,
+         Datagram, false},
+    }),
+    [](const testing::TestParamInfo<GetEbpfProgramTestCase>& info) { return info.param.name; });
+
+TEST_P(HotRestartingParentGetEbpfProgramTest, GetEbpfProgramForChild) {
+  const GetEbpfProgramTestCase& param = GetParam();
+  MockListenerManager listener_manager;
+  Network::MockListenerConfig listener_config;
+  std::vector<std::reference_wrapper<Network::ListenerConfig>> listeners;
+  InSequence s;
+  listeners.push_back(std::ref(*static_cast<Network::ListenerConfig*>(&listener_config)));
+  EXPECT_CALL(server_, listenerManager()).WillOnce(ReturnRef(listener_manager));
+  EXPECT_CALL(listener_manager, listeners(ListenerManager::ListenerState::ACTIVE))
+      .WillOnce(Return(listeners));
+  EXPECT_CALL(listener_config, listenSocketFactories());
+  Network::Address::InstanceConstSharedPtr address =
+      std::make_shared<Network::Address::Ipv4Instance>("0.0.0.0", 80, nullptr,
+                                                       param.listener_namespace);
+  auto* socket_factory =
+      static_cast<Network::MockListenSocketFactory*>(listener_config.socket_factories_[0].get());
+  EXPECT_CALL(*socket_factory, localAddress()).WillOnce(ReturnRef(address));
+  if (param.addresses_match) {
+    EXPECT_CALL(listener_config, bindToPort()).WillOnce(Return(param.bind_to_port));
+    if (param.bind_to_port) {
+      EXPECT_CALL(*socket_factory, socketType()).WillOnce(Return(param.socket_type));
+    }
+  }
+
+  Network::ReuseportEbpfProgramSharedPtr program;
+  if (param.addresses_match && param.bind_to_port && param.socket_type == Datagram) {
+    if (param.has_program) {
+      program = std::make_shared<Network::ReuseportEbpfProgram>(makeTestFd());
+    }
+    EXPECT_CALL(*socket_factory, reuseportEbpfProgram()).WillOnce(Return(program));
+  }
+
+  HotRestartMessage::Request request;
+  request.mutable_pass_ebpf_program()->set_address("udp://0.0.0.0:80");
+  request.mutable_pass_ebpf_program()->set_network_namespace(param.request_namespace);
+  HotRestartMessage message = hot_restarting_parent_.getEbpfProgramForChild(request);
+  EXPECT_EQ(program != nullptr ? program->fd() : INVALID_SOCKET,
+            message.reply().pass_ebpf_program().fd());
+}
+
+// A TCP and a UDP listener share the listen address. The lookup must skip the TCP one and return
+// the UDP factory's program.
+TEST_F(HotRestartingParentTest, GetEbpfProgramForChildSocketTypeDisambiguation) {
+  MockListenerManager listener_manager;
+  Network::MockListenerConfig tcp_listener_config;
+  Network::MockListenerConfig udp_listener_config;
+  std::vector<std::reference_wrapper<Network::ListenerConfig>> listeners;
+  InSequence s;
+
+  listeners.push_back(std::ref(*static_cast<Network::ListenerConfig*>(&tcp_listener_config)));
+  listeners.push_back(std::ref(*static_cast<Network::ListenerConfig*>(&udp_listener_config)));
+
+  EXPECT_CALL(server_, listenerManager()).WillOnce(ReturnRef(listener_manager));
+  EXPECT_CALL(listener_manager, listeners(ListenerManager::ListenerState::ACTIVE))
+      .WillOnce(Return(listeners));
+  Network::Address::InstanceConstSharedPtr address =
+      std::make_shared<Network::Address::Ipv4Instance>("0.0.0.0", 80);
+
+  auto* tcp_socket_factory = static_cast<Network::MockListenSocketFactory*>(
+      tcp_listener_config.socket_factories_[0].get());
+  EXPECT_CALL(tcp_listener_config, listenSocketFactories());
+  EXPECT_CALL(*tcp_socket_factory, localAddress()).WillOnce(ReturnRef(address));
+  EXPECT_CALL(tcp_listener_config, bindToPort()).WillOnce(Return(true));
+  EXPECT_CALL(*tcp_socket_factory, socketType()).WillOnce(Return(Network::Socket::Type::Stream));
+
+  auto* udp_socket_factory = static_cast<Network::MockListenSocketFactory*>(
+      udp_listener_config.socket_factories_[0].get());
+  EXPECT_CALL(udp_listener_config, listenSocketFactories());
+  EXPECT_CALL(*udp_socket_factory, localAddress()).WillOnce(ReturnRef(address));
+  EXPECT_CALL(udp_listener_config, bindToPort()).WillOnce(Return(true));
+  EXPECT_CALL(*udp_socket_factory, socketType()).WillOnce(Return(Network::Socket::Type::Datagram));
+
+  const auto program = std::make_shared<Network::ReuseportEbpfProgram>(makeTestFd());
+  EXPECT_CALL(*udp_socket_factory, reuseportEbpfProgram()).WillOnce(Return(program));
+
+  HotRestartMessage::Request request;
+  request.mutable_pass_ebpf_program()->set_address("udp://0.0.0.0:80");
+  HotRestartMessage message = hot_restarting_parent_.getEbpfProgramForChild(request);
+  EXPECT_EQ(program->fd(), message.reply().pass_ebpf_program().fd());
 }
 
 TEST_F(HotRestartingParentTest, ExportStatsToChild) {
