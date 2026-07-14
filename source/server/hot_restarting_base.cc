@@ -100,10 +100,16 @@ bool RpcStream::sendHotRestartMessage(sockaddr_un& address, const HotRestartMess
     message.msg_iov = iov;
     message.msg_iovlen = 1;
 
-    // Control data stuff, only relevant for the fd passing done with PassListenSocketReply.
+    // Control data stuff, only relevant for the fd passing done with PassListenSocketReply and
+    // PassEbpfProgramReply.
+    int passed_fd = INVALID_SOCKET;
+    if (replyIsExpectedType(&proto, HotRestartMessage::Reply::kPassListenSocket)) {
+      passed_fd = proto.reply().pass_listen_socket().fd();
+    } else if (replyIsExpectedType(&proto, HotRestartMessage::Reply::kPassEbpfProgram)) {
+      passed_fd = proto.reply().pass_ebpf_program().fd();
+    }
     uint8_t control_buffer[CMSG_SPACE(sizeof(int))];
-    if (replyIsExpectedType(&proto, HotRestartMessage::Reply::kPassListenSocket) &&
-        proto.reply().pass_listen_socket().fd() != -1) {
+    if (SOCKET_VALID(passed_fd)) {
       memset(control_buffer, 0, CMSG_SPACE(sizeof(int)));
       message.msg_control = control_buffer;
       message.msg_controllen = CMSG_SPACE(sizeof(int));
@@ -111,7 +117,7 @@ bool RpcStream::sendHotRestartMessage(sockaddr_un& address, const HotRestartMess
       control_message->cmsg_level = SOL_SOCKET;
       control_message->cmsg_type = SCM_RIGHTS;
       control_message->cmsg_len = CMSG_LEN(sizeof(int));
-      *reinterpret_cast<int*>(CMSG_DATA(control_message)) = proto.reply().pass_listen_socket().fd();
+      *reinterpret_cast<int*>(CMSG_DATA(control_message)) = passed_fd;
       ASSERT(sent == total_size, "an fd passing message was too long for one sendmsg().");
     }
 
@@ -160,20 +166,27 @@ bool RpcStream::replyIsExpectedType(const HotRestartMessage* proto,
 }
 
 // Pull the cloned fd, if present, out of the control data and write it into the
-// PassListenSocketReply proto; the higher level code will see a listening fd that Just Works. We
-// should only get control data in a PassListenSocketReply, it should only be the fd passing type,
-// and there should only be one at a time. Crash on any other control data.
+// PassListenSocketReply or PassEbpfProgramReply proto; the higher level code will see an fd that
+// Just Works. We should only get control data in one of those two reply types, it should only be
+// the fd passing type, and there should only be one at a time. Crash on any other control data.
 void RpcStream::getPassedFdIfPresent(HotRestartMessage* out, msghdr* message) {
   // NOLINTNEXTLINE(clang-analyzer-core.UndefinedBinaryOperatorResult)
   cmsghdr* cmsg = CMSG_FIRSTHDR(message);
   if (cmsg != nullptr) {
+    const bool is_listen_socket =
+        replyIsExpectedType(out, HotRestartMessage::Reply::kPassListenSocket);
     RELEASE_ASSERT(cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS &&
-                       replyIsExpectedType(out, HotRestartMessage::Reply::kPassListenSocket),
+                       (is_listen_socket ||
+                        replyIsExpectedType(out, HotRestartMessage::Reply::kPassEbpfProgram)),
                    "recvmsg() came with control data when the message's purpose was not to pass a "
                    "file descriptor.");
 
-    out->mutable_reply()->mutable_pass_listen_socket()->set_fd(
-        *reinterpret_cast<int*>(CMSG_DATA(cmsg)));
+    const int fd = *reinterpret_cast<int*>(CMSG_DATA(cmsg));
+    if (is_listen_socket) {
+      out->mutable_reply()->mutable_pass_listen_socket()->set_fd(fd);
+    } else {
+      out->mutable_reply()->mutable_pass_ebpf_program()->set_fd(fd);
+    }
 
     RELEASE_ASSERT(CMSG_NXTHDR(message, cmsg) == nullptr,
                    "More than one control data on a single hot restart recvmsg().");

@@ -29,6 +29,11 @@ message HotRestartMessage {
     }
     message TestConnection {
     }
+    // Requests the eBPF program used for routing packets within the reuseport group.
+    message PassEbpfProgram {
+      string address = 1;
+      string network_namespace = 2;
+    }
     oneof request {
       PassListenSocket pass_listen_socket = 1;
       ShutdownAdmin shutdown_admin = 2;
@@ -37,12 +42,17 @@ message HotRestartMessage {
       Terminate terminate = 5;
       ForwardedUdpPacket forwarded_udp_packet = 6;
       TestConnection test_connection = 7;
+      PassEbpfProgram pass_ebpf_program = 8;
     }
   }
 
   // Parent->child replies
   message Reply {
     message PassListenSocket {
+      int32 fd = 1;
+    }
+    message PassEbpfProgram {
+      // -1 when the parent has no program for the requested address.
       int32 fd = 1;
     }
     message ShutdownAdmin {
@@ -80,12 +90,13 @@ message HotRestartMessage {
       map<string, RepeatedSpan> dynamics = 5;
     }
     oneof reply {
-      // When this oneof is of the PassListenSocketReply type, there is a special
-      // implied meaning: the recvmsg that got this proto has control data to make
+      // When this oneof is of the PassListenSocketReply or PassEbpfProgram type, there is a
+      // special implied meaning: the recvmsg that got this proto has control data to make
       // the passing of the fd work, so make use of CMSG_SPACE etc.
       PassListenSocket pass_listen_socket = 1;
       ShutdownAdmin shutdown_admin = 2;
       Stats stats = 3;
+      PassEbpfProgram pass_ebpf_program = 4;
     }
   }
 

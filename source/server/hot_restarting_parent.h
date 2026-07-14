@@ -37,6 +37,9 @@ public:
     // Return value is the response to return to the child.
     envoy::HotRestartMessage
     getListenSocketsForChild(const envoy::HotRestartMessage::Request& request);
+    // Return value is the response to return to the child.
+    envoy::HotRestartMessage
+    getEbpfProgramForChild(const envoy::HotRestartMessage::Request& request);
     // 'stats' is a field in the reply protobuf to be sent to the child, which we should populate.
     void exportStatsToChild(envoy::HotRestartMessage::Reply::Stats* stats);
     void recordDynamics(envoy::HotRestartMessage::Reply::Stats* stats, const std::string& name,
@@ -47,6 +50,11 @@ public:
     void handle(uint32_t worker_index, const Network::UdpRecvData& packet) override;
 
   private:
+    // Finds the bound listen socket factory matching the address url (and network namespace, if
+    // any), or nullptr if there is none.
+    Network::ListenSocketFactory* findListenSocketFactory(const std::string& address_url,
+                                                          absl::string_view network_namespace);
+
     Server::Instance* const server_{};
     HotRestartMessageSender& udp_sender_;
   };

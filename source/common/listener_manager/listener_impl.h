@@ -88,6 +88,12 @@ public:
     }
   }
   absl::Status doFinalPreWorkerInit() override;
+  Network::ReuseportEbpfProgramSharedPtr reuseportEbpfProgram() const override {
+    return reuseport_ebpf_program_;
+  }
+  void setReuseportEbpfProgram(Network::ReuseportEbpfProgramSharedPtr program) override {
+    reuseport_ebpf_program_ = std::move(program);
+  }
 
 private:
   ListenSocketFactoryImpl(ListenerComponentFactory& factory,
@@ -124,6 +130,8 @@ private:
   // TODO(mattklein123): If a listener does not bind, it still has a socket. This is confusing
   // and not needed and can be cleaned up.
   std::vector<Network::SocketSharedPtr> sockets_;
+  // The eBPF program routing packets within this factory's reuseport group, if any.
+  Network::ReuseportEbpfProgramSharedPtr reuseport_ebpf_program_;
 };
 
 // TODO(mattklein123): Consider getting rid of pre-worker start and post-worker start code by

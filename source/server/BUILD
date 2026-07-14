@@ -198,6 +198,7 @@ envoy_cc_library(
         "//envoy/network:connection_handler_interface",
         "//source/common/common:hash_lib",
         "//source/common/memory:stats_lib",
+        "//source/common/network:reuseport_ebpf_program_lib",
         "//source/common/stats:stat_merger_lib",
         "//source/common/stats:symbol_table_lib",
         "//source/common/stats:utility_lib",

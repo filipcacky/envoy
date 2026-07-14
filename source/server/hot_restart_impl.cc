@@ -121,6 +121,11 @@ int HotRestartImpl::duplicateParentListenSocket(const std::string& address, uint
   return as_child_.duplicateParentListenSocket(address, worker_index, network_namespace);
 }
 
+int HotRestartImpl::duplicateParentEbpfProgram(const std::string& address,
+                                               absl::string_view network_namespace) {
+  return as_child_.duplicateParentEbpfProgram(address, network_namespace);
+}
+
 void HotRestartImpl::registerUdpForwardingListener(
     Network::Address::InstanceConstSharedPtr address,
     std::shared_ptr<Network::UdpListenerConfig> listener_config) {

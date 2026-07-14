@@ -33,6 +33,9 @@ constexpr uint32_t DefaultMaxConnectionsToAcceptPerSocketEvent = UINT32_MAX;
 class ActiveUdpListenerFactory;
 class UdpListenerWorkerRouter;
 
+class ReuseportEbpfProgram;
+using ReuseportEbpfProgramSharedPtr = std::shared_ptr<ReuseportEbpfProgram>;
+
 class ListenSocketFactory;
 using ListenSocketFactoryPtr = std::unique_ptr<ListenSocketFactory>;
 
@@ -83,6 +86,18 @@ public:
    * @return a status indicating if an error occurred.
    */
   virtual absl::Status doFinalPreWorkerInit() PURE;
+
+  /**
+   * @return the eBPF program used for routing packets within this factory's reuseport group, or
+   * nullptr if there is none.
+   */
+  virtual ReuseportEbpfProgramSharedPtr reuseportEbpfProgram() const { return nullptr; }
+
+  /**
+   * Associates the reuseport-group eBPF program with this factory so it can be passed to a
+   * hot restart child.
+   */
+  virtual void setReuseportEbpfProgram(ReuseportEbpfProgramSharedPtr) {}
 };
 
 } // namespace Network
