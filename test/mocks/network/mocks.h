@@ -470,6 +470,8 @@ public:
   MOCK_METHOD(Network::ListenSocketFactoryPtr, clone, (), (const));
   MOCK_METHOD(void, closeAllSockets, ());
   MOCK_METHOD(absl::Status, doFinalPreWorkerInit, ());
+  MOCK_METHOD(Network::ReuseportEbpfProgramSharedPtr, reuseportEbpfProgram, (), (const));
+  MOCK_METHOD(void, setReuseportEbpfProgram, (Network::ReuseportEbpfProgramSharedPtr));
 };
 
 class MockUdpPacketWriterFactory : public UdpPacketWriterFactory {

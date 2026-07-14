@@ -206,6 +206,7 @@ envoy_cc_test(
     rbe_pool = "6gig",
     deps = [
         ":utility_lib",
+        "//source/common/network:reuseport_ebpf_program_lib",
         "//source/common/stats:stats_lib",
         "//source/server:hot_restart_lib",
         "//source/server:hot_restarting_child",

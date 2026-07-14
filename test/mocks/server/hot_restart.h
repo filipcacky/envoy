@@ -18,6 +18,8 @@ public:
   MOCK_METHOD(int, duplicateParentListenSocket,
               (const std::string& address, uint32_t worker_index,
                absl::string_view network_namespace));
+  MOCK_METHOD(int, duplicateParentEbpfProgram,
+              (const std::string& address, absl::string_view network_namespace));
   MOCK_METHOD(void, registerUdpForwardingListener,
               (Network::Address::InstanceConstSharedPtr address,
                std::shared_ptr<Network::UdpListenerConfig> listener_config));
