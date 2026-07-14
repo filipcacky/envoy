@@ -3,6 +3,7 @@
 #include "envoy/server/instance.h"
 #include "envoy/stats/stats.h"
 
+#include "source/common/common/scoped_fd.h"
 #include "source/common/memory/stats.h"
 #include "source/common/network/utility.h"
 #include "source/common/stats/stat_merger.h"
@@ -114,6 +115,12 @@ void HotRestartingParent::onSocketEvent() {
       break;
     }
 
+    case HotRestartMessage::Request::kPassEbpfProgram: {
+      main_rpc_stream_.sendHotRestartMessage(
+          child_address_, internal_->getEbpfProgramForChild(wrapped_request->request()));
+      break;
+    }
+
     case HotRestartMessage::Request::kStats: {
       HotRestartMessage wrapped_reply;
       internal_->exportStatsToChild(wrapped_reply.mutable_reply()->mutable_stats());
@@ -201,6 +208,45 @@ HotRestartingParent::Internal::getListenSocketsForChild(const HotRestartMessage:
     }
   }
   return wrapped_reply;
+}
+
+HotRestartMessage
+HotRestartingParent::Internal::getEbpfProgramForChild(const HotRestartMessage::Request& request) {
+  HotRestartMessage wrapped_reply;
+  wrapped_reply.mutable_reply()->mutable_pass_ebpf_program()->set_fd(-1);
+
+  Network::ListenSocketFactory* socket_factory = findListenSocketFactory(
+      request.pass_ebpf_program().address(), request.pass_ebpf_program().network_namespace());
+  if (socket_factory != nullptr) {
+    const ScopedFdSharedPtr program = socket_factory->reuseportEbpfProgram();
+    if (program != nullptr) {
+      wrapped_reply.mutable_reply()->mutable_pass_ebpf_program()->set_fd(program->fd());
+    }
+  }
+  return wrapped_reply;
+}
+
+Network::ListenSocketFactory*
+HotRestartingParent::Internal::findListenSocketFactory(const std::string& address_url,
+                                                       absl::string_view network_namespace) {
+  Network::Address::InstanceConstSharedPtr addr = THROW_OR_RETURN_VALUE(
+      Network::Utility::resolveUrl(address_url), Network::Address::InstanceConstSharedPtr);
+  if (!network_namespace.empty() && addr->ip() != nullptr) {
+    addr = addr->withNetworkNamespace(network_namespace);
+  }
+  StatusOr<Network::Socket::Type> socket_type = Network::Utility::socketTypeFromUrl(address_url);
+  // socketTypeFromUrl should return a valid value since resolveUrl returned a valid address.
+  ASSERT(socket_type.ok());
+
+  for (const auto& listener : server_->listenerManager().listeners()) {
+    for (auto& socket_factory : listener.get().listenSocketFactories()) {
+      if (*socket_factory->localAddress() == *addr && listener.get().bindToPort() &&
+          socket_factory->socketType() == *socket_type) {
+        return socket_factory.get();
+      }
+    }
+  }
+  return nullptr;
 }
 
 // TODO(fredlas) if there are enough stats for stat name length to become an issue, this current

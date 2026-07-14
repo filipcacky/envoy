@@ -19,6 +19,7 @@
 #include "envoy/network/transport_socket.h"
 #include "envoy/stats/scope.h"
 
+#include "source/common/common/scoped_fd.h"
 #include "source/common/network/dns_resolver/dns_factory_util.h"
 #include "source/common/network/filter_manager_impl.h"
 #include "source/common/network/socket_interface.h"
@@ -472,6 +473,10 @@ public:
   MOCK_METHOD(Network::ListenSocketFactoryPtr, clone, (), (const));
   MOCK_METHOD(void, closeAllSockets, ());
   MOCK_METHOD(absl::Status, doFinalPreWorkerInit, ());
+  MOCK_METHOD(ScopedFdSharedPtr, reuseportEbpfProgram, (), (const));
+  MOCK_METHOD(void, setReuseportEbpfProgram, (ScopedFdSharedPtr));
+};
+
 };
 
 class MockUdpPacketWriterFactory : public UdpPacketWriterFactory {

@@ -26,6 +26,10 @@
 #include "absl/strings/string_view.h"
 
 namespace Envoy {
+
+class ScopedFd;
+using ScopedFdSharedPtr = std::shared_ptr<ScopedFd>;
+
 namespace Network {
 
 // Set this to the maximum value which effectively accepts all connections.
@@ -84,6 +88,18 @@ public:
    * @return a status indicating if an error occurred.
    */
   virtual absl::Status doFinalPreWorkerInit() PURE;
+
+  /**
+   * @return the eBPF program used for routing packets within this factory's reuseport group, or
+   * nullptr if there is none.
+   */
+  virtual ScopedFdSharedPtr reuseportEbpfProgram() const { return nullptr; }
+
+  /**
+   * Associates the reuseport-group eBPF program with this factory so it can be passed to a
+   * hot restart child.
+   */
+  virtual void setReuseportEbpfProgram(ScopedFdSharedPtr) {}
 };
 
 } // namespace Network

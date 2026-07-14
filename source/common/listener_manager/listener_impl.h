@@ -18,6 +18,7 @@
 
 #include "source/common/common/basic_resource_impl.h"
 #include "source/common/common/logger.h"
+#include "source/common/common/scoped_fd.h"
 #include "source/common/init/manager_impl.h"
 #include "source/common/init/target_impl.h"
 #include "source/common/listener_manager/fcds_api.h"
@@ -89,6 +90,10 @@ public:
     }
   }
   absl::Status doFinalPreWorkerInit() override;
+  ScopedFdSharedPtr reuseportEbpfProgram() const override { return reuseport_ebpf_program_; }
+  void setReuseportEbpfProgram(ScopedFdSharedPtr program) override {
+    reuseport_ebpf_program_ = std::move(program);
+  }
 
 private:
   ListenSocketFactoryImpl(ListenerComponentFactory& factory,
@@ -125,6 +130,8 @@ private:
   // TODO(mattklein123): If a listener does not bind, it still has a socket. This is confusing
   // and not needed and can be cleaned up.
   std::vector<Network::SocketSharedPtr> sockets_;
+  // The eBPF program routing packets within this factory's reuseport group, if any.
+  ScopedFdSharedPtr reuseport_ebpf_program_;
 };
 
 // TODO(mattklein123): Consider getting rid of pre-worker start and post-worker start code by

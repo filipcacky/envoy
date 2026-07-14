@@ -66,6 +66,7 @@ envoy_cc_mock(
         "//envoy/network:resolver_interface",
         "//envoy/network:transport_socket_interface",
         "//envoy/server:listener_manager_interface",
+        "//source/common/common:scoped_fd_lib",
         "//source/common/network:address_lib",
         "//source/common/network:listener_lib",
         "//source/common/network:socket_interface_lib",

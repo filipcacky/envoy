@@ -202,6 +202,7 @@ envoy_cc_library(
         "//envoy/network:connection_handler_interface",
         "//envoy/stats:stats_interface",
         "//source/common/common:hash_lib",
+        "//source/common/common:scoped_fd_lib",
         "//source/common/memory:stats_lib",
         "//source/common/stats:stat_merger_lib",
         "//source/common/stats:symbol_table_lib",

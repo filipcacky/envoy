@@ -505,6 +505,20 @@ envoy_cc_library(
 )
 
 envoy_cc_library(
+    name = "bpf_syscalls_lib",
+    srcs = ["bpf_syscalls.cc"],
+    hdrs = ["bpf_syscalls.h"],
+    deps = [
+        "//envoy/api:os_sys_calls_interface",
+        "//envoy/common:base_includes",
+        "//source/common/singleton:threadsafe_singleton",
+    ] + select({
+        "//bazel:linux": ["//bazel/foreign_cc:libbpf_linux"],
+        "//conditions:default": [],
+    }),
+)
+
+envoy_cc_library(
     name = "socket_option_factory_lib",
     srcs = ["socket_option_factory.cc"],
     hdrs = ["socket_option_factory.h"],

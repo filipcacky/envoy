@@ -152,6 +152,15 @@ envoy_cc_library(
     hdrs = ["safe_memcpy.h"],
 )
 
+envoy_cc_library(
+    name = "scoped_fd_lib",
+    srcs = ["scoped_fd.cc"],
+    hdrs = ["scoped_fd.h"],
+    deps = [
+        "//envoy/common:base_includes",
+    ],
+)
+
 # fmt_lib is automatically a dependency of all envoy_cc_library definitions.
 envoy_basic_cc_library(
     name = "fmt_lib",

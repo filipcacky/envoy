@@ -214,6 +214,7 @@ envoy_cc_test(
     deps = [
         ":utility_lib",
         "//source/common/stats:allocator_lib",
+        "//source/common/common:scoped_fd_lib",
         "//source/common/stats:stats_lib",
         "//source/common/stats:tag_producer_lib",
         "//source/common/stats:thread_local_store_lib",
