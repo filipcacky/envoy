@@ -61,6 +61,18 @@ public:
                                           absl::string_view network_namespace) PURE;
 
   /**
+   * Retrieve the eBPF program used for routing packets within the reuseport group of the
+   * specified listen address from the parent process. The program fd will be duplicated across
+   * process boundaries.
+   * @param address supplies the listen address of the reuseport group, e.g. udp://127.0.0.1:5000.
+   * @param network_namespace supplies the network namespace of the socket, if any.
+   * @return int the fd or -1 if the parent has no program for the address (or predates this
+   *         message type).
+   */
+  virtual int duplicateParentEbpfProgram(const std::string& address,
+                                         absl::string_view network_namespace) PURE;
+
+  /**
    * Registers a UdpListenerConfig as a possible receiver of udp packets forwarded from the
    * parent process to the child process. This is used to forward QUIC packets that are not for
    * connections belonging to the parent process during draining (in the absence of BPF delivery to

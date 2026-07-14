@@ -23,6 +23,7 @@
 #include "source/common/network/filter_matcher.h"
 #include "source/common/network/io_socket_handle_impl.h"
 #include "source/common/network/listen_socket_impl.h"
+#include "source/common/network/reuseport_ebpf_program.h"
 #include "source/common/network/socket_interface.h"
 #include "source/common/network/socket_option_factory.h"
 #include "source/common/network/utility.h"
@@ -1282,6 +1283,15 @@ absl::Status ListenerManagerImpl::createListenSocketFactory(ListenerImpl& listen
       if (!factory_or_error.status().ok()) {
         socket_status = factory_or_error.status();
       } else {
+        // Listeners that skip socket inheritance (see should_duplicate_ above) inherit the
+        // reuseport group's eBPF routing program instead.
+        if (socket_type == Network::Socket::Type::Datagram && !creation_options.should_duplicate_ &&
+            bind_type == ListenerComponentFactory::BindType::ReusePort &&
+            (*factory_or_error)->localAddress()->type() == Network::Address::Type::Ip) {
+          (*factory_or_error)
+              ->setReuseportEbpfProgram(
+                  duplicateParentEbpfProgram(*(*factory_or_error)->localAddress()));
+        }
         socket_status = listener.addSocketFactory(std::move(*factory_or_error));
       }
       if (!socket_status.ok()) {
@@ -1300,6 +1310,18 @@ absl::Status ListenerManagerImpl::createListenSocketFactory(ListenerImpl& listen
     incListenerCreateFailureStat();
   }
   return socket_status;
+}
+
+Network::ReuseportEbpfProgramSharedPtr
+ListenerManagerImpl::duplicateParentEbpfProgram(const Network::Address::Instance& address) {
+  const std::string addr = absl::StrCat(Network::Utility::UDP_SCHEME, address.asString());
+  const os_fd_t fd = server_.hotRestart().duplicateParentEbpfProgram(
+      addr, address.networkNamespace().value_or(""));
+  if (!SOCKET_VALID(fd)) {
+    return nullptr;
+  }
+  ENVOY_LOG(debug, "obtained reuseport eBPF program for address {} from parent", addr);
+  return std::make_shared<Network::ReuseportEbpfProgram>(fd);
 }
 
 void ListenerManagerImpl::maybeCloseSocketsForListener(ListenerImpl& listener) {

@@ -148,7 +148,8 @@ ListenSocketFactoryImpl::ListenSocketFactoryImpl(const ListenSocketFactoryImpl& 
       listener_name_(factory_to_clone.listener_name_),
       tcp_backlog_size_(factory_to_clone.tcp_backlog_size_),
       bind_type_(factory_to_clone.bind_type_),
-      socket_creation_options_(factory_to_clone.socket_creation_options_) {
+      socket_creation_options_(factory_to_clone.socket_creation_options_),
+      reuseport_ebpf_program_(factory_to_clone.reuseport_ebpf_program_) {
   if (socket_creation_options_.should_duplicate_) {
     for (auto& socket : factory_to_clone.sockets_) {
       // In the cloning case we always duplicate() the socket. This makes sure that during listener

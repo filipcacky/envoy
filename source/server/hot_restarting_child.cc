@@ -147,6 +147,29 @@ int HotRestartingChild::duplicateParentListenSocket(const std::string& address,
   return wrapped_reply->reply().pass_listen_socket().fd();
 }
 
+int HotRestartingChild::duplicateParentEbpfProgram(const std::string& address,
+                                                   absl::string_view network_namespace) {
+  if (parent_terminated_) {
+    return -1;
+  }
+
+  HotRestartMessage wrapped_request;
+  wrapped_request.mutable_request()->mutable_pass_ebpf_program()->set_address(address);
+  wrapped_request.mutable_request()->mutable_pass_ebpf_program()->set_network_namespace(
+      network_namespace);
+  main_rpc_stream_.sendHotRestartMessage(parent_address_, wrapped_request);
+
+  std::unique_ptr<HotRestartMessage> wrapped_reply =
+      main_rpc_stream_.receiveHotRestartMessage(RpcStream::Blocking::Yes);
+  // An old-binary parent replies with didnt_recognize_your_last_message instead of a
+  // PassEbpfProgram reply. Treat it the same as a parent without a program.
+  if (!main_rpc_stream_.replyIsExpectedType(wrapped_reply.get(),
+                                            HotRestartMessage::Reply::kPassEbpfProgram)) {
+    return -1;
+  }
+  return wrapped_reply->reply().pass_ebpf_program().fd();
+}
+
 std::unique_ptr<HotRestartMessage> HotRestartingChild::getParentStats() {
   if (parent_terminated_ || skip_parent_stats_) {
     return nullptr;

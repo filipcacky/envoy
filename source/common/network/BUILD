@@ -491,6 +491,15 @@ envoy_cc_library(
 )
 
 envoy_cc_library(
+    name = "reuseport_ebpf_program_lib",
+    srcs = ["reuseport_ebpf_program.cc"],
+    hdrs = ["reuseport_ebpf_program.h"],
+    deps = [
+        "//envoy/common:base_includes",
+    ],
+)
+
+envoy_cc_library(
     name = "socket_option_factory_lib",
     srcs = ["socket_option_factory.cc"],
     hdrs = ["socket_option_factory.h"],

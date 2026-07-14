@@ -363,6 +363,10 @@ private:
 
   absl::Status setNewOrDrainingSocketFactory(const std::string& name, ListenerImpl& listener);
   absl::Status createListenSocketFactory(ListenerImpl& listener);
+  // Retrieves the reuseport-group eBPF routing program for the given listen address from the hot
+  // restart parent, or nullptr if it has none.
+  Network::ReuseportEbpfProgramSharedPtr
+  duplicateParentEbpfProgram(const Network::Address::Instance& address);
 
   void maybeCloseSocketsForListener(ListenerImpl& listener);
   absl::Status setupSocketFactoryForListener(ListenerImpl& new_listener,

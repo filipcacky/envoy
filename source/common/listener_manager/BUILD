@@ -51,6 +51,7 @@ envoy_cc_library(
         "//source/common/network:listen_socket_lib",
         "//source/common/network:listener_lib",
         "//source/common/network:resolver_lib",
+        "//source/common/network:reuseport_ebpf_program_lib",
         "//source/common/network:socket_option_factory_lib",
         "//source/common/network:udp_packet_writer_handler_lib",
         "//source/common/network:utility_lib",
