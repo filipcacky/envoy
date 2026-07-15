@@ -497,6 +497,7 @@ EXTENSIONS = {
     #
 
     "envoy.quic.deterministic_connection_id_generator": "//source/extensions/quic/connection_id_generator/deterministic:envoy_deterministic_connection_id_generator_config",
+    "envoy.quic.connection_id_generator.epoch_stable":  "//source/extensions/quic/connection_id_generator/epoch_stable:epoch_stable_config",
     "envoy.quic.connection_id_generator.quic_lb":       "//source/extensions/quic/connection_id_generator/quic_lb:quic_lb_config",
     "envoy.quic.crypto_stream.server.quiche":           "//source/extensions/quic/crypto_stream:envoy_quic_default_crypto_server_stream",
     "envoy.quic.proof_source.filter_chain":             "//source/extensions/quic/proof_source:envoy_quic_default_proof_source",

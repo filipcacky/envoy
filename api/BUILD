@@ -391,6 +391,7 @@ proto_library(
         "//envoy/extensions/quic/client_writer_factory/v3:pkg",
         "//envoy/extensions/quic/connection_debug_visitor/quic_stats/v3:pkg",
         "//envoy/extensions/quic/connection_debug_visitor/v3:pkg",
+        "//envoy/extensions/quic/connection_id_generator/epoch_stable/v3:pkg",
         "//envoy/extensions/quic/connection_id_generator/quic_lb/v3:pkg",
         "//envoy/extensions/quic/connection_id_generator/v3:pkg",
         "//envoy/extensions/quic/crypto_stream/v3:pkg",
