@@ -46,6 +46,15 @@ public:
    */
   virtual QuicConnectionIdWorkerSelector
   getCompatibleConnectionIdWorkerSelector(uint32_t concurrency) PURE;
+
+  /**
+   * Called once per worker listen socket after the socket option from
+   * createCompatibleLinuxBpfSocketOption has been applied to the reuseport group.
+   */
+  virtual absl::Status registerWorkerSocket(uint32_t /*worker_index*/,
+                                            const Network::Socket& /*socket*/) {
+    return absl::OkStatus();
+  }
 };
 
 using EnvoyQuicConnectionIdGeneratorFactoryPtr =

@@ -386,6 +386,11 @@ ActiveQuicListenerFactory::ActiveQuicListenerFactory(
     cid_generator_config_ = config.connection_id_generator_config();
   }
 
+  has_stateful_packet_routing_ =
+      Config::Utility::getAndCheckFactory<EnvoyQuicConnectionIdGeneratorConfigFactory>(
+          cid_generator_config_)
+          .isStateful();
+
   if (config.has_server_preferred_address_config()) {
     const envoy::config::core::v3::TypedExtensionConfig& server_preferred_address_config =
         config.server_preferred_address_config();
@@ -416,7 +421,8 @@ absl::Status ActiveQuicListenerFactory::initializeWorkerRouting(
 
   for (const auto& factory : socket_factories) {
     auto group_state = WorkerRoutingState::initializeReuseportGroup(
-        context_, cid_generator_config_factory, cid_generator_config_, *factory);
+        context_, cid_generator_config_factory, cid_generator_config_, *factory,
+        hasStatefulPacketRouting());
 
     RETURN_IF_NOT_OK_REF(group_state.status());
 
@@ -552,7 +558,7 @@ ActiveQuicListenerFactory::WorkerRoutingState::initializeReuseportGroup(
     Server::Configuration::ListenerFactoryContext& listener_factory_context,
     EnvoyQuicConnectionIdGeneratorConfigFactory& cid_generator_config_factory,
     const envoy::config::core::v3::TypedExtensionConfig& cid_generator_config,
-    Network::ListenSocketFactory& socket_factory) {
+    Network::ListenSocketFactory& socket_factory, bool is_stateful) {
   absl::StatusOr<EnvoyQuicConnectionIdGeneratorFactoryPtr> cid_generator_factory =
       cid_generator_config_factory.createQuicConnectionIdGeneratorFactoryForReuseportGroup(
           *Config::Utility::translateToFactoryConfig(
@@ -568,7 +574,7 @@ ActiveQuicListenerFactory::WorkerRoutingState::initializeReuseportGroup(
       listener_factory_context.serverFactoryContext().options().concurrency();
 
   if (!disable_kernel_bpf_packet_routing_for_test_) {
-    if (concurrency > 1) {
+    if (concurrency > 1 || is_stateful) {
       absl::StatusOr<Network::Socket::OptionConstSharedPtr> option =
           cid_generator_factory.value()->createCompatibleLinuxBpfSocketOption(concurrency);
       if (option.ok()) {
@@ -581,6 +587,10 @@ ActiveQuicListenerFactory::WorkerRoutingState::initializeReuseportGroup(
                 fmt::format("cannot apply listener factory socket options on socket: {}",
                             socket->connectionInfoProvider().localAddress()->asString()));
           }
+        }
+        for (uint32_t i = 0; i < concurrency; i++) {
+          const auto socket = socket_factory.getListenSocket(i);
+          RETURN_IF_NOT_OK(cid_generator_factory.value()->registerWorkerSocket(i, *socket));
         }
         kernel_worker_routing = true;
       } else if (absl::IsUnimplemented(option.status())) {

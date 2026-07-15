@@ -18,6 +18,7 @@ public:
   ScopedFd& operator=(ScopedFd&& other) noexcept;
 
   os_fd_t fd() const;
+  bool isValid() const;
 
 private:
   void close();

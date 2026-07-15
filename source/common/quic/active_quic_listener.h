@@ -169,7 +169,7 @@ private:
         Server::Configuration::ListenerFactoryContext& listener_factory_context,
         EnvoyQuicConnectionIdGeneratorConfigFactory& cid_generator_config_factory,
         const envoy::config::core::v3::TypedExtensionConfig& cid_generator_config,
-        Network::ListenSocketFactory& socket_factory);
+        Network::ListenSocketFactory& socket_factory, bool is_stateful);
   };
 
   const WorkerRoutingState& workerRoutingState(const Network::Address::Instance& listen_address);
