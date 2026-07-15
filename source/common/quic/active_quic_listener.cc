@@ -507,7 +507,8 @@ ActiveQuicListenerFactory::createReuseportGroupState(
   Network::Socket::OptionsSharedPtr options;
 
   if (!disable_kernel_bpf_packet_routing_for_test_) {
-    if (context_.serverFactoryContext().options().concurrency() <= 1) {
+    if (context_.serverFactoryContext().options().concurrency() <= 1 &&
+        !hasStatefulPacketRouting()) {
       ENVOY_LOG(info, "Not applying BPF because concurrency is 1");
       state.kernel_worker_routing_ = true;
     } else {
