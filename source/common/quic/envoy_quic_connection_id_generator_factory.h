@@ -5,6 +5,7 @@
 #include "envoy/server/factory_context.h"
 
 #include "quiche/quic/core/connection_id_generator.h"
+#include "quiche/quic/load_balancer/load_balancer_encoder.h"
 
 namespace Envoy {
 namespace Quic {
@@ -50,32 +51,15 @@ public:
 using EnvoyQuicConnectionIdGeneratorFactoryPtr =
     std::unique_ptr<EnvoyQuicConnectionIdGeneratorFactory>;
 
-/**
- * Context created during configuration load and shared by the connection ID generator factories
- * created from it.
- */
-class EnvoyQuicConnectionIdGeneratorContext {
-public:
-  virtual ~EnvoyQuicConnectionIdGeneratorContext() = default;
-
-  /**
-   * Create a connection ID generator factory. Called after the listen sockets are created.
-   */
-  virtual EnvoyQuicConnectionIdGeneratorFactoryPtr createQuicConnectionIdGeneratorFactory() PURE;
-};
-
-using EnvoyQuicConnectionIdGeneratorContextPtr =
-    std::unique_ptr<EnvoyQuicConnectionIdGeneratorContext>;
-
 class EnvoyQuicConnectionIdGeneratorConfigFactory : public Config::TypedFactory {
 public:
   std::string category() const override { return "envoy.quic.connection_id_generator"; }
 
   /**
-   * Returns a connection ID generator context based on the given config.
+   * Returns a connection ID factory based on the given config.
    */
-  virtual EnvoyQuicConnectionIdGeneratorContextPtr
-  createQuicConnectionIdGeneratorContext(const Protobuf::Message& config,
+  virtual EnvoyQuicConnectionIdGeneratorFactoryPtr
+  createQuicConnectionIdGeneratorFactory(const Protobuf::Message& config,
                                          ProtobufMessage::ValidationVisitor& validation_visitor,
                                          Server::Configuration::FactoryContext& context) PURE;
 };
