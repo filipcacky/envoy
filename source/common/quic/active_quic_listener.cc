@@ -512,7 +512,7 @@ absl::Status ActiveQuicListenerFactory::initializeCidGeneratorAndWorkerRouting()
   quic_cid_generator_factory_ = cid_generator_config_factory.createQuicConnectionIdGeneratorFactory(
       *Config::Utility::translateToFactoryConfig(
           cid_generator_config_, context_.messageValidationVisitor(), cid_generator_config_factory),
-      context_.messageValidationVisitor(), context_);
+      context_);
 
   worker_selector_ = quic_cid_generator_factory_->getCompatibleConnectionIdWorkerSelector();
 

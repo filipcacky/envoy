@@ -16,12 +16,11 @@ ProtobufTypes::MessagePtr ConfigFactory::createEmptyConfigProto() {
 }
 
 EnvoyQuicConnectionIdGeneratorFactoryPtr ConfigFactory::createQuicConnectionIdGeneratorFactory(
-    const Protobuf::Message& config, ProtobufMessage::ValidationVisitor& validation_visitor,
-    Server::Configuration::FactoryContext& context) {
+    const Protobuf::Message& config, Server::Configuration::FactoryContext& context) {
   auto factory_or_status = Factory::create(
       MessageUtil::downcastAndValidate<
           const envoy::extensions::quic::connection_id_generator::quic_lb::v3::Config&>(
-          config, validation_visitor),
+          config, context.messageValidationVisitor()),
       context);
   THROW_IF_NOT_OK_REF(factory_or_status.status());
   return std::move(factory_or_status.value());

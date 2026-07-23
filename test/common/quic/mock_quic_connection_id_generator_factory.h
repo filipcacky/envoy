@@ -33,9 +33,7 @@ public:
   }
 
   MOCK_METHOD(EnvoyQuicConnectionIdGeneratorFactoryPtr, createQuicConnectionIdGeneratorFactory,
-              (const Protobuf::Message&, ProtobufMessage::ValidationVisitor&,
-               Server::Configuration::FactoryContext&),
-              (override));
+              (const Protobuf::Message&, Server::Configuration::FactoryContext&), (override));
 };
 
 } // namespace Quic
