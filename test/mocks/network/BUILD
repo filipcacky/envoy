@@ -68,6 +68,7 @@ envoy_cc_mock(
         "//envoy/server:listener_manager_interface",
         "//source/common/common:scoped_fd_lib",
         "//source/common/network:address_lib",
+        "//source/common/network:bpf_syscalls_lib",
         "//source/common/network:listener_lib",
         "//source/common/network:socket_interface_lib",
         "//source/common/network:utility_lib",

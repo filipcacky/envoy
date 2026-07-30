@@ -20,6 +20,7 @@
 #include "envoy/stats/scope.h"
 
 #include "source/common/common/scoped_fd.h"
+#include "source/common/network/bpf_syscalls.h"
 #include "source/common/network/dns_resolver/dns_factory_util.h"
 #include "source/common/network/filter_manager_impl.h"
 #include "source/common/network/socket_interface.h"
@@ -477,6 +478,24 @@ public:
   MOCK_METHOD(void, setReuseportEbpfProgram, (ScopedFdSharedPtr));
 };
 
+class MockBpfSysCalls : public BpfSysCallsImpl {
+public:
+  MockBpfSysCalls() = default;
+
+  MOCK_METHOD(Api::SysCallPtrResult, bpfObjectOpenMem, (const void*, size_t));
+  MOCK_METHOD(Api::SysCallIntResult, bpfObjectLoad, (bpf_object*));
+  MOCK_METHOD(bpf_program*, bpfObjectFindProgramByName, (bpf_object*, const char*));
+  MOCK_METHOD(bpf_map*, bpfObjectFindMapByName, (bpf_object*, const char*));
+  MOCK_METHOD(Api::SysCallIntResult, bpfProgramFd, (const bpf_program*));
+  MOCK_METHOD(Api::SysCallIntResult, bpfMapFd, (const bpf_map*));
+  MOCK_METHOD(uint32_t, bpfMapMaxEntries, (const bpf_map*));
+  MOCK_METHOD(void, bpfObjectClose, (bpf_object*));
+  MOCK_METHOD(Api::SysCallIntResult, bpfProgGetMapIds, (os_fd_t, absl::Span<uint32_t>, uint32_t&));
+  MOCK_METHOD(Api::SysCallIntResult, bpfMapGetInfoByFd, (os_fd_t, BpfMapInfo&));
+  MOCK_METHOD(Api::SysCallSocketResult, bpfMapGetFdById, (uint32_t));
+  MOCK_METHOD(Api::SysCallSocketResult, bpfMapCreateReuseportSockArray, (uint32_t, const char*));
+  MOCK_METHOD(Api::SysCallIntResult, bpfMapLookupElem, (os_fd_t, const void*, void*));
+  MOCK_METHOD(Api::SysCallIntResult, bpfMapUpdateElem, (os_fd_t, const void*, const void*));
 };
 
 class MockUdpPacketWriterFactory : public UdpPacketWriterFactory {
