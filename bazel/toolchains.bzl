@@ -1,6 +1,6 @@
 load("@com_google_protobuf//bazel/private/oss/toolchains/prebuilt:protoc_toolchain.bzl", "prebuilt_protoc_repo")
 load("@com_google_protobuf//toolchain:platforms.bzl", "PROTOBUF_PLATFORMS")
-load("@envoy_repo//:compiler.bzl", "LLVM_LIB_DIR", "LLVM_PATH", "LLVM_VERSION_LOCAL", "USE_LIBSTDCPP", "USE_LOCAL_SYSROOT")
+load("@envoy_repo//:compiler.bzl", "HOST_IS_MACOS", "LLVM_LIB_DIR", "LLVM_PATH", "LLVM_VERSION_LOCAL", "USE_LIBSTDCPP", "USE_LOCAL_SYSROOT")
 load("@envoy_toolshed//repository:utils.bzl", "arch_alias")
 load("@toolchains_llvm//toolchain:rules.bzl", "llvm_toolchain")
 
@@ -70,7 +70,7 @@ def envoy_toolchains():
         llvm_version = LLVM_VERSION,
         # NOTE: This MUST remain stable for Envoy CI to prevent redownload of the LLVM binaries due to
         #   mismatched OS data between cache/host/workers
-        exec_os = None if LLVM_PATH else "linux",
+        exec_os = None if (LLVM_PATH or HOST_IS_MACOS) else "linux",
         extra_llvm_distributions = {
             "LLVM-22.1.8-Linux-ARM64.tar.xz": "805efad2bb91cb4967fa569e0881d10c0f69c04461cf671cccbae19f547acc34",
             "LLVM-22.1.8-Linux-X64.tar.xz": "df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384",

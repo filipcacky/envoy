@@ -138,6 +138,7 @@ def _envoy_repo_impl(repository_ctx):
     # (e.g. RHEL/UBI).
     use_libstdcpp = repository_ctx.os.environ.get("BAZEL_USE_LIBSTDCPP", "False")
     use_libstdcpp = {"True": True, "False": False}.get(use_libstdcpp, False)
+    host_is_macos = repository_ctx.os.name.lower().startswith("mac")
 
     repository_ctx.file("compiler.bzl", """
 LLVM_PATH = '%s'
@@ -145,7 +146,8 @@ LLVM_VERSION_LOCAL = '%s'
 LLVM_LIB_DIR = '%s'
 USE_LOCAL_SYSROOT = %s
 USE_LIBSTDCPP = %s
-""" % (llvm_path, llvm_version_local, llvm_lib_dir, local_sysroot, use_libstdcpp))
+HOST_IS_MACOS = %s
+""" % (llvm_path, llvm_version_local, llvm_lib_dir, local_sysroot, use_libstdcpp, host_is_macos))
     repository_ctx.file("version.bzl", "VERSION = '%s'\nAPI_VERSION = '%s'" % (version, api_version))
     repository_ctx.file("path.bzl", "PATH = '%s'" % repo_version_path.dirname)
     repository_ctx.file("envoy_repo.py", "PATH = '%s'\nVERSION = '%s'\nAPI_VERSION = '%s'" % (repo_version_path.dirname, version, api_version))
