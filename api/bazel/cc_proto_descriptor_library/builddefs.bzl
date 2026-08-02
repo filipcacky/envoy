@@ -130,6 +130,11 @@ def _cc_library_func(ctx, name, hdrs, srcs, copts, includes, dep_ccinfos):
         **blaze_only_args
     )
 
+    # A dynamic variant leaves the dep descriptors undefined, which ld64 rejects
+    targets_macos = ctx.target_platform_has_constraint(
+        ctx.attr._macos_constraint[platform_common.ConstraintValueInfo],
+    )
+
     # buildifier: disable=unused-variable
     (linking_context, linking_outputs) = cc_common.create_linking_context_from_compilation_outputs(
         actions = ctx.actions,
@@ -138,7 +143,7 @@ def _cc_library_func(ctx, name, hdrs, srcs, copts, includes, dep_ccinfos):
         cc_toolchain = toolchain,
         compilation_outputs = compilation_outputs,
         linking_contexts = linking_contexts,
-        disallow_dynamic_library = cc_common.is_enabled(feature_configuration = feature_configuration, feature_name = "targets_windows"),
+        disallow_dynamic_library = targets_macos or cc_common.is_enabled(feature_configuration = feature_configuration, feature_name = "targets_windows"),
         **blaze_only_args
     )
 
@@ -315,6 +320,9 @@ cc_proto_descriptor_library_aspect = aspect(
         ),
         "_cc_toolchain": attr.label(
             default = "@bazel_tools//tools/cpp:current_cc_toolchain",
+        ),
+        "_macos_constraint": attr.label(
+            default = Label("@platforms//os:osx"),
         ),
         "_descriptor": attr.label_list(
             default = [
