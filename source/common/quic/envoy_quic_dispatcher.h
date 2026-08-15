@@ -1,5 +1,6 @@
 #pragma once
 
+#include <list>
 #include <string>
 
 #include "envoy/network/listener.h"
@@ -77,6 +78,8 @@ public:
   quic::QuicTimeWaitListManager* CreateQuicTimeWaitListManager() override;
 
   void closeConnectionsWithFilterChain(const Network::FilterChain* filter_chain);
+  void onFilterChainDrainStart(const std::list<const Network::FilterChain*>& filter_chains);
+  void onListenerDrainStart();
 
   void updateListenerConfig(Network::ListenerConfig& new_listener_config);
 
@@ -105,6 +108,8 @@ private:
   friend class EnvoyQuicDispatcherTest;
   // NOLINTNEXTLINE(readability-identifier-naming)
   Http::SessionIdleListInterface* idle_session_list() { return session_idle_list_.get(); }
+
+  void notifyOnDrain(const std::vector<std::reference_wrapper<Network::Connection>>& connections);
 
   Network::ConnectionHandler& connection_handler_;
   Network::ListenerConfig* listener_config_{nullptr};

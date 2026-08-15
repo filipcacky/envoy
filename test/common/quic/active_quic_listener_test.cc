@@ -464,6 +464,23 @@ TEST_P(ActiveQuicListenerTest, ReceiveCHLO) {
   readFromClientSockets();
 }
 
+TEST_P(ActiveQuicListenerTest, ShutdownListenerDrainsConnections) {
+  initialize();
+  maybeConfigureMocks(/* connection_count = */ 1);
+  quic::QuicConnectionId connection_id = quic::test::TestConnectionId(1);
+  sendCHLO(connection_id);
+  dispatcher_->run(Event::Dispatcher::RunType::Block);
+  const quic::QuicSession* session =
+      quic::test::QuicDispatcherPeer::FindSession(quic_dispatcher_, connection_id);
+  ASSERT(session != nullptr);
+
+  EXPECT_CALL(network_connection_callbacks_, onDrain());
+  quic_listener_->shutdownListener({});
+  EXPECT_TRUE(session->connection()->connected());
+
+  readFromClientSockets();
+}
+
 class MockNonDispatchedUdpPacketHandler : public Network::NonDispatchedUdpPacketHandler {
 public:
   MOCK_METHOD(void, handle, (uint32_t worker_index, const Network::UdpRecvData& packet));

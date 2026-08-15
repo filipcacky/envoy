@@ -247,9 +247,9 @@ void ActiveQuicListener::resumeListening() { quic_dispatcher_->StartAcceptingNew
 void ActiveQuicListener::shutdownListener(const Network::ExtraShutdownListenerOptions& options) {
   non_dispatched_udp_packet_handler_ = options.non_dispatched_udp_packet_handler_;
 
-  // Same as pauseListening() because all we want is to stop accepting new
-  // connections.
   quic_dispatcher_->StopAcceptingNewConnections();
+  // Unlike pauseListening(), notify existing connections to go away
+  onListenerDrainStart();
 }
 
 uint32_t ActiveQuicListener::destination(const Network::UdpRecvData& data) const {
@@ -291,15 +291,11 @@ void ActiveQuicListener::onFilterChainDraining(
 }
 
 void ActiveQuicListener::onFilterChainDrainStart(
-    const std::list<const Network::FilterChain*>& /*draining_filter_chains*/) {
-  // TODO: notify QUIC connections in the given filter chains that draining has begun
-  // (e.g. via HTTP/3 GOAWAY) without closing them.
+    const std::list<const Network::FilterChain*>& draining_filter_chains) {
+  quic_dispatcher_->onFilterChainDrainStart(draining_filter_chains);
 }
 
-void ActiveQuicListener::onListenerDrainStart() {
-  // TODO: notify all QUIC connections on this listener that draining has begun without
-  // closing them.
-}
+void ActiveQuicListener::onListenerDrainStart() { quic_dispatcher_->onListenerDrainStart(); }
 
 void ActiveQuicListener::closeConnectionsWithFilterChain(const Network::FilterChain* filter_chain) {
   quic_dispatcher_->closeConnectionsWithFilterChain(filter_chain);

@@ -230,10 +230,11 @@ public:
       EXPECT_CALL(write_total_, add(_)).Times(AnyNumber());
     }
 
+    Network::MockConnectionCallbacks network_connection_callbacks_;
+
   private:
     Network::MockFilterChainManager filter_chain_manager_;
     std::shared_ptr<Network::MockReadFilter> read_filter_{new Network::MockReadFilter()};
-    Network::MockConnectionCallbacks network_connection_callbacks_;
     testing::StrictMock<Stats::MockCounter> read_total_;
     testing::StrictMock<Stats::MockGauge> read_current_;
     // Currently QUIC only populates write_total_.
@@ -517,6 +518,29 @@ TEST_P(EnvoyQuicDispatcherTest, CloseWithGivenFilterChain) {
 
   EXPECT_CALL(network_connection_callbacks, onEvent(Network::ConnectionEvent::LocalClose));
   envoy_quic_dispatcher_.closeConnectionsWithFilterChain(&proof_source_->filterChain());
+}
+
+TEST_P(EnvoyQuicDispatcherTest, DrainStartNotifiesConnections) {
+  PreparedFilterChainMocks mocks(*this);
+  envoy_quic_dispatcher_.ProcessBufferedChlos(kNumSessionsToCreatePerLoopForTests);
+  createSession(54321);
+  const quic::QuicSession* session =
+      quic::test::QuicDispatcherPeer::FindSession(&envoy_quic_dispatcher_, connection_id_);
+  ASSERT_TRUE(session != nullptr);
+
+  // An unrelated filter chain is a no-op
+  Network::MockFilterChain other_filter_chain;
+  EXPECT_CALL(mocks.network_connection_callbacks_, onDrain()).Times(0);
+  envoy_quic_dispatcher_.onFilterChainDrainStart({&other_filter_chain});
+
+  // The matching filter chain and the listener-wide drain each notify without closing
+  EXPECT_CALL(mocks.network_connection_callbacks_, onDrain()).Times(2);
+  envoy_quic_dispatcher_.onFilterChainDrainStart({&proof_source_->filterChain()});
+  envoy_quic_dispatcher_.onListenerDrainStart();
+  EXPECT_TRUE(session->connection()->connected());
+  EXPECT_EQ(1u, envoy_quic_dispatcher_.NumSessions());
+
+  envoy_quic_dispatcher_.Shutdown();
 }
 
 TEST_P(EnvoyQuicDispatcherTest, EnvoyQuicCryptoServerStreamHelper) {

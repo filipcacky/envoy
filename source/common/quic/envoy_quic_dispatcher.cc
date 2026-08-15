@@ -5,6 +5,7 @@
 #include <functional>
 #include <list>
 #include <memory>
+#include <vector>
 
 #include "envoy/common/optref.h"
 #include "envoy/network/connection.h"
@@ -204,6 +205,34 @@ void EnvoyQuicDispatcher::closeConnectionsWithFilterChain(
       // If any filters access those configs during destruction, it'll be use-after-free
       DeleteSessions();
     }
+  }
+}
+
+void EnvoyQuicDispatcher::onFilterChainDrainStart(
+    const std::list<const Network::FilterChain*>& filter_chains) {
+  std::vector<std::reference_wrapper<Network::Connection>> connections;
+  for (const Network::FilterChain* filter_chain : filter_chains) {
+    auto iter = connections_by_filter_chain_.find(filter_chain);
+    if (iter != connections_by_filter_chain_.end()) {
+      connections.insert(connections.end(), iter->second.begin(), iter->second.end());
+    }
+  }
+  notifyOnDrain(connections);
+}
+
+void EnvoyQuicDispatcher::onListenerDrainStart() {
+  std::vector<std::reference_wrapper<Network::Connection>> connections;
+  connections.reserve(NumSessions());
+  for (const auto& entry : connections_by_filter_chain_) {
+    connections.insert(connections.end(), entry.second.begin(), entry.second.end());
+  }
+  notifyOnDrain(connections);
+}
+
+void EnvoyQuicDispatcher::notifyOnDrain(
+    const std::vector<std::reference_wrapper<Network::Connection>>& connections) {
+  for (Network::Connection& connection : connections) {
+    connection.onDrain();
   }
 }
 
