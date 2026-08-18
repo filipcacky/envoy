@@ -418,8 +418,8 @@ public:
    * See discussion here https://stackoverflow.com/questions/13502398/json-integers-limit-on-size
    * and spec https://www.rfc-editor.org/rfc/rfc7159#section-6 for more details.
    */
-  void addNumber(uint64_t u) { response_.add(absl::StrCat(u)); }
-  void addNumber(int64_t i) { response_.add(absl::StrCat(i)); }
+  void addNumber(uint64_t u) { response_.add(absl::AlphaNum(u).Piece()); }
+  void addNumber(int64_t i) { response_.add(absl::AlphaNum(i).Piece()); }
 
   /**
    * Serializes a bool to the output stream.
