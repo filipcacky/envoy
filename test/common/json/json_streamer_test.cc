@@ -100,6 +100,33 @@ TYPED_TEST(JsonStreamerTest, MapOneBool) {
   EXPECT_EQ(R"EOF({"a":true})EOF", this->toString());
 }
 
+TYPED_TEST(JsonStreamerTest, MapNonDefaultEntries) {
+  {
+    auto map = this->streamer_.makeRootMap();
+    map->addNonDefaultEntries({{"string", "a"},
+                               {"double", 1.5},
+                               {"uint", static_cast<uint64_t>(1)},
+                               {"int", static_cast<int64_t>(-1)},
+                               {"bool", true}});
+  }
+  EXPECT_EQ(R"EOF({"string":"a","double":1.5,"uint":1,"int":-1,"bool":true})EOF",
+            this->buffer_.toString());
+}
+
+TYPED_TEST(JsonStreamerTest, MapNonDefaultEntriesLeavesOutDefaults) {
+  {
+    auto map = this->streamer_.makeRootMap();
+    map->addNonDefaultEntries({{"string", ""},
+                               {"double", 0.0},
+                               {"uint", static_cast<uint64_t>(0)},
+                               {"int", static_cast<int64_t>(0)},
+                               {"bool", false},
+                               {"nothing", absl::monostate()},
+                               {"kept", "a"}});
+  }
+  EXPECT_EQ(R"EOF({"kept":"a"})EOF", this->buffer_.toString());
+}
+
 TYPED_TEST(JsonStreamerTest, MapTwoBools) {
   {
     auto map = this->streamer_.makeRootMap();

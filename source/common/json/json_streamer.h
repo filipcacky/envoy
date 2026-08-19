@@ -375,6 +375,25 @@ public:
       }
     }
 
+    /**
+     * @return true if `value` holds the default for the type it is of, false otherwise
+     */
+    static bool isDefaultValue(const Value& value) {
+      switch (value.index()) {
+      case 0:
+        return absl::get<absl::string_view>(value).empty();
+      case 1:
+        return absl::get<double>(value) == 0.0;
+      case 2:
+        return absl::get<uint64_t>(value) == 0;
+      case 3:
+        return absl::get<int64_t>(value) == 0;
+      case 4:
+        return !absl::get<bool>(value);
+      }
+      return true;
+    }
+
   protected:
     bool is_first_{true}; // Used to control whether a comma-separator is added for a new entry.
     StreamerBase& streamer_;
@@ -420,6 +439,20 @@ public:
       for (const NameValue& entry : entries) {
         addKey(entry.first);
         this->addValue(entry.second);
+      }
+    }
+
+    /**
+     * Populates the name/value pairs whose value is not the default for its type,
+     * leaving the rest out. It's a programming error to call this method on a
+     * map that's not the current top level.
+     */
+    void addNonDefaultEntries(const Entries& entries) {
+      for (const NameValue& entry : entries) {
+        if (!Level::isDefaultValue(entry.second)) {
+          addKey(entry.first);
+          this->addValue(entry.second);
+        }
       }
     }
 
