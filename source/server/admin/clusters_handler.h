@@ -9,7 +9,6 @@
 
 #include "source/server/admin/handler_ctx.h"
 
-#include "absl/strings/string_view.h"
 #include "re2/re2.h"
 
 namespace Envoy {
@@ -34,11 +33,6 @@ public:
                              AdminStream&);
 
 private:
-  void addOutlierInfo(const std::string& cluster_name,
-                      const Upstream::Outlier::Detector* outlier_detector,
-                      Buffer::Instance& response);
-  bool shouldIncludeCluster(const std::string& cluster_name,
-                            const std::optional<const re2::RE2>& filter);
   void writeClustersAsJson(const std::optional<const re2::RE2>& filter, Buffer::Instance& response);
   void writeClustersAsText(const std::optional<const re2::RE2>& filter, Buffer::Instance& response);
 };
