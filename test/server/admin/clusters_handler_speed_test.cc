@@ -159,15 +159,21 @@ void clusterSizes(benchmark::internal::Benchmark* benchmark) {
 
 uint64_t run(benchmark::State& state, Envoy::Server::ClustersSpeedTest& test_context) {
   Envoy::Http::ResponseHeaderMapPtr headers = Envoy::Http::ResponseHeaderMapImpl::create();
-  Envoy::Buffer::OwnedImpl response;
+  Envoy::Buffer::OwnedImpl chunk;
   uint64_t response_bytes = 0;
   for (auto _ : state) { // NOLINT
-    test_context.handler().handlerClusters(*headers, response, test_context.adminStream());
+    Envoy::Server::Admin::RequestPtr request =
+        test_context.handler().makeRequest(test_context.adminStream());
+    request->start(*headers);
 
-    state.PauseTiming();
-    response_bytes += response.length();
-    response.drain(response.length());
-    state.ResumeTiming();
+    for (bool more = true; more;) {
+      more = request->nextChunk(chunk);
+
+      state.PauseTiming();
+      response_bytes += chunk.length();
+      chunk.drain(chunk.length());
+      state.ResumeTiming();
+    }
   }
   return response_bytes;
 }

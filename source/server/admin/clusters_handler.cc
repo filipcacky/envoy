@@ -5,6 +5,7 @@
 
 #include "source/common/http/headers.h"
 #include "source/common/http/utility.h"
+#include "source/common/json/proto_streamer.h"
 #include "source/common/network/utility.h"
 #include "source/common/upstream/host_utility.h"
 #include "source/server/admin/utils.h"
@@ -336,6 +337,51 @@ void setHealthFlag(Upstream::Host::HealthFlag flag, const Upstream::Host& host,
   }
 }
 
+Admin::UrlHandler ClustersHandler::handlerClustersStreamed() {
+  return {
+      "/clusters_streamed",
+      "upstream cluster status, streamed one cluster at a time and, as JSON, not pretty-printed",
+      [this](AdminStream& admin_stream) { return makeRequest(admin_stream); },
+      false,
+      false,
+      {{Admin::ParamDescriptor::Type::String, "filter",
+        "Regular expression (Google re2) for filtering clusters by name"},
+       {Admin::ParamDescriptor::Type::Enum, "format", "File format to use", {"text", "json"}}}};
+}
+
+Admin::RequestPtr ClustersHandler::makeRequest(AdminStream& admin_stream) {
+  Http::Utility::QueryParamsMulti query_params = admin_stream.queryParams();
+  const std::optional<std::string> filter = Utility::nonEmptyQueryParam(query_params, "filter");
+  const std::optional<std::string> format = Utility::formatParam(query_params);
+
+  std::optional<const re2::RE2> re2_filter;
+  if (filter.has_value()) {
+    re2::RE2::Options options;
+    options.set_log_errors(false);
+    re2_filter.emplace(filter.value(), options);
+    if (!re2_filter->ok()) {
+      return Admin::makeStaticTextRequest("Invalid re2 regex", Http::Code::BadRequest);
+    }
+  }
+
+  // Snapshot the cluster names since don't have a guarantee the cluster reference will be alive
+  // at a later point.
+  std::deque<std::string> cluster_names;
+  auto all_clusters = server_.clusterManager().clusters();
+  for (const auto& [name, cluster_ref] : all_clusters.active_clusters_) {
+    UNREFERENCED_PARAMETER(name);
+    const std::string& cluster_name = cluster_ref.get().info()->name();
+    if (shouldIncludeCluster(cluster_name, re2_filter)) {
+      cluster_names.emplace_back(cluster_name);
+    }
+  }
+
+  if (format.has_value() && format.value() == "json") {
+    return std::make_unique<JsonClustersDumpRequest>(server_, std::move(cluster_names));
+  }
+  return std::make_unique<TextClustersDumpRequest>(server_, std::move(cluster_names));
+}
+
 void ClustersHandler::writeClustersAsJson(const std::optional<const re2::RE2>& filter,
                                           Buffer::Instance& response) {
   envoy::admin::v3::Clusters clusters;
@@ -364,6 +410,104 @@ void ClustersHandler::writeClustersAsText(const std::optional<const re2::RE2>& f
     }
     writeClusterAsText(cluster, response);
   }
+}
+
+ClustersDumpRequest::ClustersDumpRequest(Server::Instance& server,
+                                         std::deque<std::string> cluster_names)
+    : server_(server), cluster_names_(std::move(cluster_names)) {}
+
+OptRef<const Upstream::Cluster> ClustersDumpRequest::nextCluster() {
+  while (!cluster_names_.empty()) {
+    const std::string cluster_name = std::move(cluster_names_.front());
+    cluster_names_.pop_front();
+    if (OptRef<const Upstream::Cluster> cluster =
+            server_.clusterManager().getActiveCluster(cluster_name);
+        cluster.has_value()) {
+      return cluster;
+    }
+  }
+  return std::nullopt;
+}
+
+bool ClustersDumpRequest::nextChunk(Buffer::Instance& response) {
+  bool more = true;
+  while (more && response_.length() < chunk_size_) {
+    more = serializeNext();
+  }
+  response.move(response_);
+
+  return more;
+}
+
+Http::Code TextClustersDumpRequest::start(Http::ResponseHeaderMap& response_headers) {
+  response_headers.setReferenceContentType(Http::Headers::get().ContentTypeValues.Text);
+  return Http::Code::OK;
+}
+
+bool TextClustersDumpRequest::serializeNext() {
+  OptRef<const Upstream::Cluster> cluster = nextCluster();
+  if (!cluster.has_value()) {
+    return false;
+  }
+  writeClusterAsText(*cluster, response_);
+  return true;
+}
+
+class JsonClustersDumpRequest::Document {
+public:
+  explicit Document(Buffer::Instance& response)
+      : streamer_(response), root_map_(streamer_.makeRootMap()) {}
+
+  bool advance() {
+    if (status_streamer_ == nullptr) {
+      return false;
+    }
+    if (!status_streamer_->next()) {
+      status_streamer_.reset();
+    }
+    return true;
+  }
+
+  void streamStatus(const Upstream::Cluster& cluster) {
+    ASSERT(status_streamer_ == nullptr);
+    if (cluster_statuses_ == nullptr) {
+      root_map_->addKey("cluster_statuses");
+      cluster_statuses_ = root_map_->addArray();
+    }
+    status_.Clear();
+    buildClusterStatus(cluster, status_);
+    status_streamer_ = std::make_unique<Json::MessageStreamer>(
+        status_, *cluster_statuses_, Json::MessageStreamer::TypeUrl::Omit,
+        Json::MessageStreamer::FieldNames::Proto, Json::MessageStreamer::Sensitive::Emit);
+  }
+
+private:
+  Json::BufferStreamer streamer_;
+  Json::BufferStreamer::MapPtr root_map_;
+  Json::BufferStreamer::ArrayPtr cluster_statuses_;
+  envoy::admin::v3::ClusterStatus status_;
+  std::unique_ptr<Json::MessageStreamer> status_streamer_;
+};
+
+JsonClustersDumpRequest::~JsonClustersDumpRequest() = default;
+
+Http::Code JsonClustersDumpRequest::start(Http::ResponseHeaderMap& response_headers) {
+  document_ = std::make_unique<Document>(response_);
+  response_headers.setReferenceContentType(Http::Headers::get().ContentTypeValues.Json);
+  return Http::Code::OK;
+}
+
+bool JsonClustersDumpRequest::serializeNext() {
+  if (document_->advance()) {
+    return true;
+  }
+  OptRef<const Upstream::Cluster> cluster = nextCluster();
+  if (!cluster.has_value()) {
+    document_.reset();
+    return false;
+  }
+  document_->streamStatus(*cluster);
+  return true;
 }
 
 } // namespace Server

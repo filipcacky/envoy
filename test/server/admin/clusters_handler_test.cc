@@ -7,6 +7,8 @@
 #include "test/mocks/event/mocks.h"
 #include "test/server/admin/admin_instance.h"
 
+#include "absl/strings/str_split.h"
+
 using testing::Return;
 using testing::ReturnPointee;
 using testing::ReturnRef;
@@ -17,6 +19,32 @@ namespace Server {
 INSTANTIATE_TEST_SUITE_P(IpVersions, AdminInstanceTest,
                          testing::ValuesIn(TestEnvironment::getIpVersionsForTest()),
                          TestUtility::ipTestParamsToString);
+
+void expectStreamedMatchesBuffered(AdminInstanceTest& test, absl::string_view query) {
+  Buffer::OwnedImpl buffered;
+  Http::TestResponseHeaderMapImpl buffered_headers;
+  EXPECT_EQ(Http::Code::OK,
+            test.getCallback(absl::StrCat("/clusters", query), buffered_headers, buffered))
+      << query;
+
+  Buffer::OwnedImpl streamed;
+  Http::TestResponseHeaderMapImpl streamed_headers;
+  EXPECT_EQ(Http::Code::OK,
+            test.getCallback(absl::StrCat("/clusters_streamed", query), streamed_headers, streamed))
+      << query;
+
+  if (absl::StrContains(query, "format=json")) {
+    envoy::admin::v3::Clusters expected;
+    TestUtility::loadFromJson(buffered.toString(), expected);
+    envoy::admin::v3::Clusters actual;
+    TestUtility::loadFromJson(streamed.toString(), actual);
+    EXPECT_THAT(actual, ProtoEqIgnoreRepeatedFieldOrdering(expected)) << query;
+  } else {
+    const std::vector<std::string> expected = absl::StrSplit(buffered.toString(), '\n');
+    const std::vector<std::string> actual = absl::StrSplit(streamed.toString(), '\n');
+    EXPECT_THAT(actual, testing::UnorderedElementsAreArray(expected)) << query;
+  }
+}
 
 TEST_P(AdminInstanceTest, ClustersJsonAndText) {
   Upstream::ClusterManager::ClusterInfoMaps cluster_maps;
@@ -246,6 +274,9 @@ fake_cluster::1.2.3.4:80::success_rate::43.2
 fake_cluster::1.2.3.4:80::local_origin_success_rate::93.2
 )EOF";
   EXPECT_EQ(expected_text, response2.toString());
+
+  expectStreamedMatchesBuffered(*this, "?format=json");
+  expectStreamedMatchesBuffered(*this, "");
 }
 
 TEST_P(AdminInstanceTest, TestClusterFilter) {
@@ -324,6 +355,13 @@ TEST_P(AdminInstanceTest, TestClusterFilter) {
   EXPECT_THAT(output_text, testing::HasSubstr("test-baz-3"));
   EXPECT_THAT(output_text, testing::Not(testing::HasSubstr("test-foo-2")));
   EXPECT_THAT(output_text, testing::Not(testing::HasSubstr("test-bar-4")));
+
+  expectStreamedMatchesBuffered(*this, "?format=json&filter=^test-bar-1$");
+  expectStreamedMatchesBuffered(*this, "?format=json&filter=^test");
+  expectStreamedMatchesBuffered(*this, "?format=json&filter=bar");
+  expectStreamedMatchesBuffered(*this, "?format=json&filter=test-foo-5");
+  expectStreamedMatchesBuffered(*this, "?format=json&filter=");
+  expectStreamedMatchesBuffered(*this, "?filter=^(test-bar-1|test-baz-3)$");
 }
 
 TEST_P(AdminInstanceTest, TestSetHealthFlag) {
@@ -492,6 +530,9 @@ TEST_P(AdminInstanceTest, ClustersAdminEndpoints) {
     EXPECT_THAT(text, testing::HasSubstr("envoy://none:cluster-a/node-a::weight::1"));
     EXPECT_THAT(text, testing::HasSubstr("envoy://none:cluster-a/node-a::health_flags::healthy"));
   }
+
+  expectStreamedMatchesBuffered(*this, "?format=json");
+  expectStreamedMatchesBuffered(*this, "");
 }
 
 // An AdminEndpoint with a null address is skipped in both JSON and text rendering.
@@ -532,6 +573,9 @@ TEST_P(AdminInstanceTest, ClustersAdminEndpointsNullAddressSkipped) {
     EXPECT_THAT(response.toString(),
                 testing::HasSubstr("envoy://none:cluster-a/node-a::hostname::node-a"));
   }
+
+  expectStreamedMatchesBuffered(*this, "?format=json");
+  expectStreamedMatchesBuffered(*this, "");
 }
 
 } // namespace Server
