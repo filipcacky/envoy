@@ -11,6 +11,7 @@
 #include "source/server/admin/utils.h"
 
 #include "absl/strings/ascii.h"
+#include "absl/strings/str_cat.h"
 
 namespace Envoy {
 namespace Server {
@@ -68,6 +69,19 @@ void addOutlierInfo(const std::string& cluster_name,
         outlier_detector->successRateEjectionThreshold(
             Upstream::Outlier::DetectorHostMonitor::SuccessRateMonitorType::LocalOrigin)));
   }
+}
+
+envoy::config::core::v3::HealthStatus edsHealthStatus(const Upstream::Host& host) {
+  if (host.healthFlagGet(Upstream::Host::HealthFlag::EDS_STATUS_DRAINING)) {
+    return envoy::config::core::v3::DRAINING;
+  }
+  if (host.healthFlagGet(Upstream::Host::HealthFlag::FAILED_EDS_HEALTH)) {
+    return envoy::config::core::v3::UNHEALTHY;
+  }
+  if (host.healthFlagGet(Upstream::Host::HealthFlag::DEGRADED_EDS_HEALTH)) {
+    return envoy::config::core::v3::DEGRADED;
+  }
+  return envoy::config::core::v3::HEALTHY;
 }
 
 // TODO(efimki): Add support of text readouts stats.
@@ -251,6 +265,240 @@ void writeClusterAsText(const Upstream::Cluster& cluster, Buffer::Instance& resp
     }
   }
 }
+
+void streamMessage(const Protobuf::Message& message, Json::BufferStreamer::Level& level) {
+  Json::MessageStreamer streamer(message, level, Json::MessageStreamer::TypeUrl::Omit,
+                                 Json::MessageStreamer::FieldNames::Proto,
+                                 Json::MessageStreamer::Sensitive::Emit);
+  while (streamer.next()) {
+  }
+}
+
+// A type.v3.Percent, which holds the rate under a `value` key.
+void addPercent(Json::BufferStreamer::Map& map, absl::string_view key, double value) {
+  map.addKey(key);
+  Json::BufferStreamer::MapPtr percent = map.addMap();
+  percent->addNonDefaultEntries({{"value", value}});
+}
+
+// One admin.v3.SimpleMetric. Its value is a uint64, which proto3 spells as a string.
+void emitMetric(Json::BufferStreamer::Array& stats, absl::string_view name, uint64_t value,
+                bool gauge) {
+  Json::BufferStreamer::MapPtr metric = stats.addMap();
+  // COUNTER is default, leave it out.
+  if (gauge) {
+    metric->addKey("type");
+    metric->addString(
+        envoy::admin::v3::SimpleMetric::Type_Name(envoy::admin::v3::SimpleMetric::GAUGE));
+  }
+  const absl::AlphaNum digits(value);
+  metric->addNonDefaultEntries({{"name", name}, {"value", digits.Piece()}});
+}
+
+class ClusterStatusEmitter {
+public:
+  ClusterStatusEmitter(const Upstream::Cluster& cluster, Json::BufferStreamer::Array& statuses)
+      : info_(cluster.info()), map_(statuses.addMap()) {
+    if (const Upstream::Outlier::Detector* detector = cluster.outlierDetector();
+        detector != nullptr) {
+      external_ejection_threshold_ = detector->successRateEjectionThreshold(
+          Upstream::Outlier::DetectorHostMonitor::SuccessRateMonitorType::ExternalOrigin);
+      local_ejection_threshold_ = detector->successRateEjectionThreshold(
+          Upstream::Outlier::DetectorHostMonitor::SuccessRateMonitorType::LocalOrigin);
+    }
+    for (const auto& host_set : cluster.prioritySet().hostSetsPerPriority()) {
+      for (const Upstream::HostSharedPtr& host : host_set->hosts()) {
+        hosts_.push_back(host);
+      }
+    }
+    if (const auto* provider = cluster.adminEndpointProvider()) {
+      admin_endpoints_ = provider->adminEndpoints();
+      // An endpoint with no address is not rendered at all.
+      std::erase_if(admin_endpoints_,
+                    [](const auto& endpoint) { return endpoint.address == nullptr; });
+    }
+  }
+
+  /**
+   * Emits the fields before the hosts, then one host each call, then the fields after them.
+   * @return false once the whole status has been emitted.
+   */
+  bool next() {
+    ASSERT(map_ != nullptr);
+    if (next_host_ == 0) {
+      emitBeforeHosts();
+      // The array is opened by the first host, so one for a cluster with none is left out.
+      if (hostCount() > 0) {
+        map_->addKey("host_statuses");
+        hosts_array_ = map_->addArray();
+      }
+    }
+    if (next_host_ < hostCount()) {
+      emitHost(next_host_++);
+      return true;
+    }
+    hosts_array_.reset();
+    emitAfterHosts();
+    map_.reset();
+    return false;
+  }
+
+private:
+  size_t hostCount() const { return hosts_.size() + admin_endpoints_.size(); }
+
+  void emitBeforeHosts() {
+    map_->addNonDefaultEntries({{"name", info_->name()}, {"added_via_api", info_->addedViaApi()}});
+    // A threshold of zero is what a cluster with no detector reports, which is left unset.
+    if (external_ejection_threshold_ > 0.0) {
+      addPercent(*map_, "success_rate_ejection_threshold", external_ejection_threshold_);
+    }
+  }
+
+  void emitAfterHosts() {
+    if (local_ejection_threshold_ > 0.0) {
+      addPercent(*map_, "local_origin_success_rate_ejection_threshold", local_ejection_threshold_);
+    }
+    emitCircuitBreakers();
+    map_->addNonDefaultEntries({{"observability_name", info_->observabilityName()},
+                                {"eds_service_name", info_->edsServiceName()}});
+  }
+
+  void emitCircuitBreakers() {
+    map_->addKey("circuit_breakers");
+    Json::BufferStreamer::MapPtr breakers = map_->addMap();
+    breakers->addKey("thresholds");
+    Json::BufferStreamer::ArrayPtr thresholds = breakers->addArray();
+    emitThresholds(*thresholds, envoy::config::core::v3::RoutingPriority::DEFAULT,
+                   info_->resourceManager(Upstream::ResourcePriority::Default));
+    emitThresholds(*thresholds, envoy::config::core::v3::RoutingPriority::HIGH,
+                   info_->resourceManager(Upstream::ResourcePriority::High));
+  }
+
+  void emitThresholds(Json::BufferStreamer::Array& thresholds,
+                      envoy::config::core::v3::RoutingPriority priority,
+                      Upstream::ResourceManager& resources) {
+    Json::BufferStreamer::MapPtr threshold = thresholds.addMap();
+    // DEFAULT is left out
+    if (priority != envoy::config::core::v3::RoutingPriority::DEFAULT) {
+      threshold->addKey("priority");
+      threshold->addString(envoy::config::core::v3::RoutingPriority_Name(priority));
+    }
+    threshold->addEntries({{"max_connections", resources.connections().max()},
+                           {"max_pending_requests", resources.pendingRequests().max()},
+                           {"max_requests", resources.requests().max()},
+                           {"max_retries", resources.retries().max()}});
+  }
+
+  void emitHost(size_t index) {
+    Json::BufferStreamer::MapPtr host_map = hosts_array_->addMap();
+    if (index < hosts_.size()) {
+      emitHostStatus(*hosts_[index], *host_map);
+    } else {
+      emitAdminEndpoint(admin_endpoints_[index - hosts_.size()], *host_map);
+    }
+  }
+
+  void emitHostStatus(const Upstream::Host& host, Json::BufferStreamer::Map& map) {
+    emitAddress(*host.address(), map);
+    emitStats(host, map);
+    emitHealthStatus(host, map);
+    const double external_success_rate = host.outlierDetector().successRate(
+        Upstream::Outlier::DetectorHostMonitor::SuccessRateMonitorType::ExternalOrigin);
+    // A detector reports a negative rate until it has measured one, which is left unset.
+    if (external_success_rate >= 0.0) {
+      addPercent(map, "success_rate", external_success_rate);
+    }
+    map.addNonDefaultEntries({{"weight", uint64_t{host.weight()}},
+                              {"hostname", host.hostname()},
+                              {"priority", uint64_t{host.priority()}}});
+    const double local_success_rate = host.outlierDetector().successRate(
+        Upstream::Outlier::DetectorHostMonitor::SuccessRateMonitorType::LocalOrigin);
+    if (local_success_rate >= 0.0) {
+      addPercent(map, "local_origin_success_rate", local_success_rate);
+    }
+    map.addKey("locality");
+    streamMessage(host.locality(), map);
+  }
+
+  void emitAddress(const Network::Address::Instance& address, Json::BufferStreamer::Map& map) {
+    address_.Clear();
+    Network::Utility::addressToProtobufAddress(address, address_);
+    map.addKey("address");
+    streamMessage(address_, map);
+  }
+
+  void emitStats(const Upstream::Host& host, Json::BufferStreamer::Map& map) {
+    const auto counters = host.counters();
+    const auto gauges = host.gauges();
+    if (counters.empty() && gauges.empty()) {
+      return;
+    }
+    map.addKey("stats");
+    Json::BufferStreamer::ArrayPtr stats = map.addArray();
+    for (const auto& [name, counter] : counters) {
+      emitMetric(*stats, name, counter.get().value(), false);
+    }
+    for (const auto& [name, gauge] : gauges) {
+      emitMetric(*stats, name, gauge.get().value(), true);
+    }
+  }
+
+  void emitHealthStatus(const Upstream::Host& host, Json::BufferStreamer::Map& map) {
+    map.addKey("health_status");
+    Json::BufferStreamer::MapPtr health = map.addMap();
+    health->addNonDefaultEntries(
+        {{"failed_active_health_check",
+          host.healthFlagGet(Upstream::Host::HealthFlag::FAILED_ACTIVE_HC)},
+         {"failed_outlier_check",
+          host.healthFlagGet(Upstream::Host::HealthFlag::FAILED_OUTLIER_CHECK)}});
+    const envoy::config::core::v3::HealthStatus eds = edsHealthStatus(host);
+    if (eds != envoy::config::core::v3::UNKNOWN) {
+      health->addEntries({{"eds_health_status", envoy::config::core::v3::HealthStatus_Name(eds)}});
+    }
+    health->addNonDefaultEntries(
+        {{"failed_active_degraded_check",
+          host.healthFlagGet(Upstream::Host::HealthFlag::DEGRADED_ACTIVE_HC)},
+         {"pending_dynamic_removal",
+          host.healthFlagGet(Upstream::Host::HealthFlag::PENDING_DYNAMIC_REMOVAL)},
+         {"pending_active_hc", host.healthFlagGet(Upstream::Host::HealthFlag::PENDING_ACTIVE_HC)},
+         {"excluded_via_immediate_hc_fail",
+          host.healthFlagGet(Upstream::Host::HealthFlag::EXCLUDED_VIA_IMMEDIATE_HC_FAIL)},
+         {"active_hc_timeout", host.healthFlagGet(Upstream::Host::HealthFlag::ACTIVE_HC_TIMEOUT)},
+         {"failed_degraded_outlier_detection",
+          host.healthFlagGet(Upstream::Host::HealthFlag::DEGRADED_OUTLIER_DETECTION)}});
+  }
+
+  void emitAdminEndpoint(const Upstream::AdminEndpointProvider::AdminEndpoint& endpoint,
+                         Json::BufferStreamer::Map& map) {
+    emitAddress(*endpoint.address, map);
+    if (!endpoint.gauges.empty()) {
+      map.addKey("stats");
+      Json::BufferStreamer::ArrayPtr stats = map.addArray();
+      for (const auto& [name, value] : endpoint.gauges) {
+        emitMetric(*stats, name, value, true);
+      }
+    }
+    map.addKey("health_status");
+    Json::BufferStreamer::MapPtr health = map.addMap();
+    if (endpoint.health != envoy::config::core::v3::UNKNOWN) {
+      health->addEntries(
+          {{"eds_health_status", envoy::config::core::v3::HealthStatus_Name(endpoint.health)}});
+    }
+    health.reset();
+    map.addNonDefaultEntries(
+        {{"weight", uint64_t{endpoint.weight}}, {"hostname", endpoint.hostname}});
+  }
+
+  Upstream::ClusterInfoConstSharedPtr info_;
+  double external_ejection_threshold_{0.0};
+  double local_ejection_threshold_{0.0};
+  std::vector<Upstream::HostSharedPtr> hosts_;
+  std::vector<Upstream::AdminEndpointProvider::AdminEndpoint> admin_endpoints_;
+  size_t next_host_{0};
+  envoy::config::core::v3::Address address_;
+  Json::BufferStreamer::MapPtr map_;
+  Json::BufferStreamer::ArrayPtr hosts_array_;
+};
 
 } // namespace
 
@@ -459,34 +707,29 @@ public:
       : streamer_(response), root_map_(streamer_.makeRootMap()) {}
 
   bool advance() {
-    if (status_streamer_ == nullptr) {
+    if (status_ == nullptr) {
       return false;
     }
-    if (!status_streamer_->next()) {
-      status_streamer_.reset();
+    if (!status_->next()) {
+      status_.reset();
     }
     return true;
   }
 
   void streamStatus(const Upstream::Cluster& cluster) {
-    ASSERT(status_streamer_ == nullptr);
+    ASSERT(status_ == nullptr);
     if (cluster_statuses_ == nullptr) {
       root_map_->addKey("cluster_statuses");
       cluster_statuses_ = root_map_->addArray();
     }
-    status_.Clear();
-    buildClusterStatus(cluster, status_);
-    status_streamer_ = std::make_unique<Json::MessageStreamer>(
-        status_, *cluster_statuses_, Json::MessageStreamer::TypeUrl::Omit,
-        Json::MessageStreamer::FieldNames::Proto, Json::MessageStreamer::Sensitive::Emit);
+    status_ = std::make_unique<ClusterStatusEmitter>(cluster, *cluster_statuses_);
   }
 
 private:
   Json::BufferStreamer streamer_;
   Json::BufferStreamer::MapPtr root_map_;
   Json::BufferStreamer::ArrayPtr cluster_statuses_;
-  envoy::admin::v3::ClusterStatus status_;
-  std::unique_ptr<Json::MessageStreamer> status_streamer_;
+  std::unique_ptr<ClusterStatusEmitter> status_;
 };
 
 JsonClustersDumpRequest::~JsonClustersDumpRequest() = default;
