@@ -93,6 +93,7 @@ void StatsHtmlRender::generate(Buffer::Instance& response, const std::string& na
       {
         StatsJsonRender::populateSupportedPercentiles(*streamer.makeRootArray());
       }
+      streamer.flush();
       response.add(";\nconst histogramDiv = document.getElementById('histograms');\n");
       // The first histogram will share the first script tag with the histogram
       // div and supportedPercentiles array constants.
@@ -103,6 +104,7 @@ void StatsHtmlRender::generate(Buffer::Instance& response, const std::string& na
     {
       StatsJsonRender::generateHistogramDetail(name, histogram, *streamer.makeRootMap());
     }
+    streamer.flush();
     response.add(");\n</script>\n");
   } else {
     StatsTextRender::generate(response, name, histogram);

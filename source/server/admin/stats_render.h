@@ -37,6 +37,9 @@ public:
 
   // Indicates that no stats for a particular type have been found.
   virtual void noStats(Buffer::Instance&, absl::string_view) {}
+
+  // How much output has been written but has not reached the response buffer yet.
+  virtual uint64_t staged() const { return 0; }
 };
 
 // Implements the Render interface for simple textual representation of stats.
@@ -76,6 +79,7 @@ public:
   void generate(Buffer::Instance&, const std::string& name,
                 const Stats::ParentHistogram& histogram) override;
   void finalize(Buffer::Instance& response) override;
+  uint64_t staged() const override;
 
   /**
    * Streams the supported percentiles into a JSON array. Note that no histogram

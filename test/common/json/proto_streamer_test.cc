@@ -24,11 +24,12 @@ stream(const Protobuf::Message& message,
   uint32_t pieces = 0;
   Buffer::OwnedImpl buffer;
   {
-    BufferStreamer streamer(buffer);
-    BufferStreamer::ArrayPtr array = streamer.makeRootArray();
+    BufferedBufferStreamer streamer(buffer);
+    BufferedBufferStreamer::ArrayPtr array = streamer.makeRootArray();
     MessageStreamer message_streamer(message, *array, MessageStreamer::TypeUrl::Omit, field_names,
                                      sensitive);
     while (message_streamer.next()) {
+      streamer.flush();
       emitted += buffer.toString();
       buffer.drain(buffer.length());
       ++pieces;

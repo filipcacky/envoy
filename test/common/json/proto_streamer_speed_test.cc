@@ -116,14 +116,17 @@ uint64_t streamMessage(const Protobuf::Message& message) {
   Buffer::OwnedImpl buffer;
   uint64_t bytes = 0;
   {
-    BufferStreamer streamer(buffer);
-    BufferStreamer::ArrayPtr array = streamer.makeRootArray();
+    BufferedBufferStreamer streamer(buffer);
+    BufferedBufferStreamer::ArrayPtr array = streamer.makeRootArray();
     MessageStreamer message_streamer(message, *array, MessageStreamer::TypeUrl::Emit,
                                      MessageStreamer::FieldNames::Proto,
                                      MessageStreamer::Sensitive::Redact);
     while (message_streamer.next()) {
-      bytes += buffer.length();
-      buffer.drain(buffer.length());
+      if (streamer.length() >= ChunkSize) {
+        streamer.flush();
+        bytes += buffer.length();
+        buffer.drain(buffer.length());
+      }
     }
   }
   return bytes + buffer.length();

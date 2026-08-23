@@ -94,8 +94,10 @@ absl::string_view mapKeyToString(const Protobuf::Message& entry, const Field& fi
 
 } // namespace
 
-MessageStreamer::MessageStreamer(const Protobuf::Message& message, BufferStreamer::Level& level,
-                                 TypeUrl type_url, FieldNames field_names, Sensitive sensitive)
+template <Output OutputType>
+MessageStreamerBase<OutputType>::MessageStreamerBase(const Protobuf::Message& message, Level& level,
+                                                     TypeUrl type_url, FieldNames field_names,
+                                                     Sensitive sensitive)
     : json_names_(field_names == FieldNames::LowerCamelCase),
       redact_(sensitive == Sensitive::Redact) {
   const std::string name =
@@ -105,12 +107,14 @@ MessageStreamer::MessageStreamer(const Protobuf::Message& message, BufferStreame
   emitNamedMessage(message, level, name, false);
 }
 
-void MessageStreamer::emitNamedMessage(const Protobuf::Message& message,
-                                       BufferStreamer::Level& level, absl::string_view type_url,
-                                       bool is_sensitive, ProtobufTypes::MessagePtr owned) {
+template <Output OutputType>
+void MessageStreamerBase<OutputType>::emitNamedMessage(const Protobuf::Message& message,
+                                                       Level& level, absl::string_view type_url,
+                                                       bool is_sensitive,
+                                                       ProtobufTypes::MessagePtr owned) {
   // ProtoJSON pairs a special representation with its `@type` under `value`.
   if (!type_url.empty() && hasSpecialRepresentation(message)) {
-    BufferStreamer::MapPtr map = level.addMap();
+    MapPtr map = level.addMap();
     map->addKey("@type");
     map->addString(type_url);
     map->addKey("value");
@@ -126,13 +130,13 @@ void MessageStreamer::emitNamedMessage(const Protobuf::Message& message,
   }
 }
 
-MessageStreamer::~MessageStreamer() {
+template <Output OutputType> MessageStreamerBase<OutputType>::~MessageStreamerBase() {
   while (!stack_.empty()) {
     stack_.pop_back();
   }
 }
 
-bool MessageStreamer::next() {
+template <Output OutputType> bool MessageStreamerBase<OutputType>::next() {
   if (stack_.empty()) {
     return false;
   }
@@ -152,7 +156,7 @@ bool MessageStreamer::next() {
   return true;
 }
 
-void MessageStreamer::nextElement(Frame& frame) {
+template <Output OutputType> void MessageStreamerBase<OutputType>::nextElement(Frame& frame) {
   const Protobuf::Reflection& reflection = *frame.message_.GetReflection();
   const Field& field = *frame.fields_[frame.next_field_];
 
@@ -170,13 +174,13 @@ void MessageStreamer::nextElement(Frame& frame) {
   }
 
   // Keys are left alone, redacting them would collapse the map onto one key.
-  BufferStreamer::Map& entries = static_cast<BufferStreamer::Map&>(*frame.elements_);
+  Map& entries = static_cast<Map&>(*frame.elements_);
   const Protobuf::Message& entry = reflection.GetRepeatedMessage(frame.message_, &field, index);
   entries.addKey(mapKeyToString(entry, *field.message_type()->map_key(), scratch_));
   emitValue(entry, *field.message_type()->map_value(), -1, entries, frame.field_is_sensitive_);
 }
 
-void MessageStreamer::startField(Frame& frame) {
+template <Output OutputType> void MessageStreamerBase<OutputType>::startField(Frame& frame) {
   const Field& field = *frame.fields_[frame.next_field_];
 
   frame.field_is_sensitive_ =
@@ -200,8 +204,10 @@ void MessageStreamer::startField(Frame& frame) {
   emitValue(frame.message_, field, -1, *frame.map_, frame.field_is_sensitive_);
 }
 
-void MessageStreamer::emitValue(const Protobuf::Message& message, const Field& field, int index,
-                                BufferStreamer::Level& level, bool is_sensitive) {
+template <Output OutputType>
+void MessageStreamerBase<OutputType>::emitValue(const Protobuf::Message& message,
+                                                const Field& field, int index, Level& level,
+                                                bool is_sensitive) {
   const Protobuf::Reflection& reflection = *message.GetReflection();
   // A map entry and a wrapper print their value even when unset, and startField cannot drop either,
   // it never sees the value field. Redaction clears it, so the default comes off an empty message.
@@ -277,8 +283,9 @@ void MessageStreamer::emitValue(const Protobuf::Message& message, const Field& f
   }
 }
 
-void MessageStreamer::emitMessage(const Protobuf::Message& message, BufferStreamer::Level& level,
-                                  bool is_sensitive) {
+template <Output OutputType>
+void MessageStreamerBase<OutputType>::emitMessage(const Protobuf::Message& message, Level& level,
+                                                  bool is_sensitive) {
   const Protobuf::Descriptor& descriptor = *message.GetDescriptor();
   switch (descriptor.well_known_type()) {
   case Protobuf::Descriptor::WELLKNOWNTYPE_UNSPECIFIED:
@@ -327,8 +334,9 @@ void MessageStreamer::emitMessage(const Protobuf::Message& message, BufferStream
   }
 }
 
-void MessageStreamer::emitAny(const Protobuf::Message& message, BufferStreamer::Level& level,
-                              bool is_sensitive) {
+template <Output OutputType>
+void MessageStreamerBase<OutputType>::emitAny(const Protobuf::Message& message, Level& level,
+                                              bool is_sensitive) {
   const Protobuf::Any* any = Protobuf::DynamicCastMessage<Protobuf::Any>(&message);
   Protobuf::Any copy;
   if (any == nullptr) {
@@ -338,7 +346,7 @@ void MessageStreamer::emitAny(const Protobuf::Message& message, BufferStreamer::
 
   ProtobufTypes::MessagePtr packed = ProtobufMessage::Helper::typeUrlToMessage(any->type_url());
   if (packed == nullptr || !MessageUtil::unpackTo(*any, *packed).ok()) {
-    BufferStreamer::MapPtr map = level.addMap();
+    MapPtr map = level.addMap();
     map->addKey("@type");
     map->addString(any->type_url());
     return;
@@ -348,8 +356,9 @@ void MessageStreamer::emitAny(const Protobuf::Message& message, BufferStreamer::
   emitNamedMessage(payload, level, any->type_url(), is_sensitive, std::move(packed));
 }
 
-void MessageStreamer::emitSpecialRepresentation(const Protobuf::Message& message,
-                                                BufferStreamer::Level& level, bool is_sensitive) {
+template <Output OutputType>
+void MessageStreamerBase<OutputType>::emitSpecialRepresentation(const Protobuf::Message& message,
+                                                                Level& level, bool is_sensitive) {
   // Protobuf prints the whole message, so it has to be handed a redacted copy.
   const ProtobufTypes::MessagePtr redacted = is_sensitive ? redactedCopy(message, true) : nullptr;
   const absl::StatusOr<std::string> json =
@@ -361,23 +370,29 @@ void MessageStreamer::emitSpecialRepresentation(const Protobuf::Message& message
   }
 }
 
-MessageStreamer::Frame& MessageStreamer::pushFrame(const Protobuf::Message& message,
-                                                   BufferStreamer::Level& level,
-                                                   bool ancestor_is_sensitive) {
+template <Output OutputType>
+typename MessageStreamerBase<OutputType>::Frame&
+MessageStreamerBase<OutputType>::pushFrame(const Protobuf::Message& message, Level& level,
+                                           bool ancestor_is_sensitive) {
   Frame& frame = stack_.emplace_back(message, level.addMap());
   frame.ancestor_is_sensitive_ = ancestor_is_sensitive;
   return frame;
 }
 
-MessageStreamer::Frame& MessageStreamer::pushOwnedFrame(ProtobufTypes::MessagePtr message,
-                                                        BufferStreamer::Level& level,
-                                                        bool ancestor_is_sensitive) {
+template <Output OutputType>
+typename MessageStreamerBase<OutputType>::Frame&
+MessageStreamerBase<OutputType>::pushOwnedFrame(ProtobufTypes::MessagePtr message, Level& level,
+                                                bool ancestor_is_sensitive) {
   Frame& frame = pushFrame(*message, level, ancestor_is_sensitive);
   frame.owned_ = std::move(message);
   return frame;
 }
 
 #undef REFLECTION_GET
+
+template class MessageStreamerBase<BufferOutput>;
+template class MessageStreamerBase<BufferedBufferOutput>;
+template class MessageStreamerBase<StringOutput>;
 
 } // namespace Json
 } // namespace Envoy

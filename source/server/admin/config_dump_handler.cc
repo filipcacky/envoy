@@ -18,6 +18,9 @@ namespace Server {
 
 namespace {
 
+using ConfigStreamer = Json::BufferedMessageStreamer;
+using Streamer = ConfigStreamer::Streamer;
+
 constexpr absl::string_view EndpointsComponentName = "endpoint";
 
 bool fieldMaskFits(const Protobuf::FieldMask& field_mask, const Protobuf::Descriptor& descriptor) {
@@ -567,7 +570,7 @@ public:
       entry_array_ = entry_map_->addArray();
       entry_array_key_ = array;
     }
-    Json::BufferStreamer::MapPtr element = entry_array_->addMap();
+    Streamer::MapPtr element = entry_array_->addMap();
     element->addKey(field);
     streamInto(*config, *element);
     config_->owned_ = std::move(config);
@@ -581,27 +584,31 @@ public:
     entry_array_key_.clear();
   }
 
+  void flush() { streamer_.flush(); }
+
+  uint64_t length() const { return streamer_.length(); }
+
 private:
   // A config being emitted, and what has to stay alive until it is whole.
   struct StreamedConfig {
     ProtobufTypes::MessagePtr owned_;
-    Json::BufferStreamer::MapPtr element_;
-    std::unique_ptr<Json::MessageStreamer> streamer_;
+    Streamer::MapPtr element_;
+    std::unique_ptr<ConfigStreamer> streamer_;
   };
 
-  void streamInto(const Protobuf::Message& config, Json::BufferStreamer::Level& level) {
+  void streamInto(const Protobuf::Message& config, Streamer::Level& level) {
     ASSERT(!streaming());
     config_ = std::make_unique<StreamedConfig>();
-    config_->streamer_ = std::make_unique<Json::MessageStreamer>(
-        config, level, Json::MessageStreamer::TypeUrl::Emit,
-        Json::MessageStreamer::FieldNames::Proto, Json::MessageStreamer::Sensitive::Redact);
+    config_->streamer_ = std::make_unique<ConfigStreamer>(
+        config, level, ConfigStreamer::TypeUrl::Emit, ConfigStreamer::FieldNames::Proto,
+        ConfigStreamer::Sensitive::Redact);
   }
 
-  Json::BufferStreamer streamer_;
-  Json::BufferStreamer::MapPtr root_map_;
-  Json::BufferStreamer::ArrayPtr configs_array_;
-  Json::BufferStreamer::MapPtr entry_map_;
-  Json::BufferStreamer::ArrayPtr entry_array_;
+  Streamer streamer_;
+  Streamer::MapPtr root_map_;
+  Streamer::ArrayPtr configs_array_;
+  Streamer::MapPtr entry_map_;
+  Streamer::ArrayPtr entry_array_;
   std::string entry_array_key_;
   std::unique_ptr<StreamedConfig> config_;
 };
@@ -619,12 +626,14 @@ Http::Code ConfigDumpRequest::start(Http::ResponseHeaderMap& response_headers) {
 
 bool ConfigDumpRequest::nextChunk(Buffer::Instance& response) {
   bool more = true;
-  while (more && response_.length() < chunk_size_) {
+  while (more && document_->length() < chunk_size_) {
     more = serializeNextConfig();
   }
   if (!more) {
     ASSERT(!document_->streaming() && !document_->entryOpen());
     document_.reset();
+  } else {
+    document_->flush();
   }
   response.move(response_);
 

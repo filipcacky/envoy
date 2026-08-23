@@ -1,5 +1,6 @@
 #pragma once
 
+#include <concepts>
 #include <memory>
 #include <stack>
 #include <string>
@@ -13,6 +14,7 @@
 #include "source/common/json/json_sanitizer.h"
 
 #include "absl/strings/string_view.h"
+#include "absl/types/optional.h"
 #include "absl/types/variant.h"
 
 namespace Envoy {
@@ -39,6 +41,15 @@ namespace Json {
 #define ASSERT_LEVELS_EMPTY ASSERT(this->levels_.empty())
 #endif
 
+template <class T>
+concept Output = requires(T output, absl::string_view token) {
+  output.add(token);
+  output.add(token, token, token);
+  output.flush();
+  { output.length() } -> std::convertible_to<uint64_t>;
+  { output.staged() } -> std::convertible_to<uint64_t>;
+};
+
 // Buffer wrapper that implements the necessary abstraction for the template
 // StreamerBase.
 // This could be used to stream JSON output of StreamerBase to a Buffer.
@@ -50,7 +61,78 @@ public:
   }
 
   explicit BufferOutput(Buffer::Instance& output) : buffer_(output) {}
+
+  void flush() {}
+  uint64_t length() const { return buffer_.length(); }
+  uint64_t staged() const { return 0; }
+
   Buffer::Instance& buffer_;
+};
+
+// Buffer wrapper that writes tokens into the buffer's own memory rather
+// than handing it one at a time.
+// Nothing else may touch the buffer while a write is pending.
+class BufferedBufferOutput {
+public:
+  // How much space is reserved at a time, and so the most that can be pending.
+  static constexpr uint64_t ReservationSize = 16 * 1024;
+
+  void add(absl::string_view a) { write(a); }
+  void add(absl::string_view a, absl::string_view b, absl::string_view c) {
+    write(a);
+    write(b);
+    write(c);
+  }
+
+  explicit BufferedBufferOutput(Buffer::Instance& output) : buffer_(output) {}
+  ~BufferedBufferOutput() { flush(); }
+
+  void flush() {
+    if (!reservation_.has_value()) {
+      return;
+    }
+    assertBufferUntouched();
+    reservation_->commit(pending_);
+    reservation_.reset();
+    pending_ = 0;
+  }
+
+  uint64_t length() const { return buffer_.length() + pending_; }
+
+  uint64_t staged() const { return pending_; }
+
+  Buffer::Instance& buffer_;
+
+private:
+  void write(absl::string_view token) {
+    if (token.empty()) {
+      return;
+    }
+    if (reservation_.has_value()) {
+      assertBufferUntouched();
+    }
+    if (!reservation_.has_value() || token.size() > reservation_->length() - pending_) {
+      flush();
+      if (token.size() > ReservationSize) {
+        buffer_.add(token);
+        return;
+      }
+      reservation_.emplace(buffer_.reserveSingleSlice(ReservationSize));
+      committed_length_ = buffer_.length();
+    }
+    memcpy(static_cast<uint8_t*>(reservation_->slice().mem_) + pending_, token.data(),
+           token.size()); // NOLINT(safe-memcpy)
+    pending_ += token.size();
+  }
+
+  void assertBufferUntouched() const {
+    ASSERT(buffer_.length() == committed_length_,
+           "the buffer was written to or drained while a JSON write was pending");
+  }
+
+  absl::optional<Buffer::ReservationSingleSlice> reservation_;
+  uint64_t pending_{0};
+  uint64_t committed_length_{0};
 };
 
 // String wrapper that implements the necessary abstraction for the template
@@ -64,6 +146,10 @@ public:
   }
   explicit StringOutput(std::string& output) : buffer_(output) {}
 
+  void flush() {}
+  uint64_t length() const { return buffer_.size(); }
+  uint64_t staged() const { return 0; }
+
   std::string& buffer_;
 };
 
@@ -73,21 +159,33 @@ public:
  * protobuf with reflection. The advantage of this approach is that it does not
  * require building an intermediate data structure with redundant copies of all
  * strings, maps, and arrays.
- *
- * NOTE: This template take a type that can be used to stream output. This is either
- * BufferOutput, StringOutput or any other types that have implemented
- * add(absl::string_view) and
- * add(absl::string_view, absl::string_view, absl::string_view) methods.
  */
-template <class OutputBufferType> class StreamerBase {
+template <Output OutputBufferType> class StreamerBase {
 public:
   using Value = absl::variant<absl::string_view, double, uint64_t, int64_t, bool, absl::monostate>;
 
   /**
    * @param response The buffer in which to stream output.
-   * NOTE: The response must could be used to construct instance of OutputBufferType.
+   * NOTE: The response must could be used to construct instance of
+   *       OutputBufferType.
    */
   template <class T> explicit StreamerBase(T& response) : response_(response) {}
+
+  /**
+   * Commits the output written so far, which a caller has to do before reading
+   * the buffer it streams into.
+   */
+  void flush() { response_.flush(); }
+
+  /**
+   * @return how much has been written
+   */
+  uint64_t length() const { return response_.length(); }
+
+  /**
+   * @return how much has been written but not flushed
+   */
+  uint64_t staged() const { return response_.staged(); }
 
   class Array;
   using ArrayPtr = std::unique_ptr<Array>;
@@ -472,6 +570,12 @@ private:
  * A Streamer that streams to a Buffer::Instance.
  */
 using BufferStreamer = StreamerBase<BufferOutput>;
+
+/**
+ * A Streamer that streams to a Buffer::Instance a reservation at a time,
+ * for a caller that owns the buffer for the whole stream.
+ */
+using BufferedBufferStreamer = StreamerBase<BufferedBufferOutput>;
 
 /**
  * A Streamer that streams to a string.

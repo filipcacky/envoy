@@ -118,6 +118,9 @@ StatsJsonRender::JsonContext::JsonContext(Buffer::Instance& response)
 
 void StatsJsonRender::drainIfNeeded(Buffer::Instance& response) {
   if (&response_ != &response) {
+    if (json_ != nullptr) {
+      json_->streamer_.flush();
+    }
     response.move(response_);
   }
 }
@@ -277,6 +280,10 @@ void StatsJsonRender::populateBucketsVerbose(
 void StatsJsonRender::finalize(Buffer::Instance& response) {
   json_.reset();
   drainIfNeeded(response);
+}
+
+uint64_t StatsJsonRender::staged() const {
+  return json_ == nullptr ? 0 : json_->streamer_.staged();
 }
 
 // Collects the buckets from the specified histogram, using either the
