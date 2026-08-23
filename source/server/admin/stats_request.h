@@ -93,12 +93,14 @@ public:
   // duplication.
   template <class StatType> void populateStatsFromScopes(const ScopeVec& scope_vec);
 
-  void renderPerHostMetrics(Buffer::Instance& response);
+  void renderPerHostMetrics();
+
+  bool renderNextChunk();
 
   // Renders the templatized type, exploiting the fact that Render::generate is
   // generic to avoid code duplication.
   template <class SharedStatType>
-  void renderStat(const std::string& name, Buffer::Instance& response, StatOrScopes& variant);
+  void renderStat(const std::string& name, StatOrScopes& variant);
 
   // Sets the chunk size.
   void setChunkSize(uint64_t chunk_size) { chunk_size_ = chunk_size; }

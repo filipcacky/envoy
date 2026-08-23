@@ -69,35 +69,32 @@ Http::Code StatsRequest::start(Http::ResponseHeaderMap& response_headers) {
 }
 
 bool StatsRequest::nextChunk(Buffer::Instance& response) {
-  if (response_.length() > 0) {
-    ASSERT(response.length() == 0);
-    response.move(response_);
-    ASSERT(response_.length() == 0);
-  }
+  const bool more = renderNextChunk();
+  response.move(response_);
+  return more;
+}
 
-  // nextChunk's contract is to add up to chunk_size_ additional bytes. The
-  // caller is not required to drain the bytes after each call to nextChunk.
-  const uint64_t starting_response_length = response.length();
-  while (response.length() + render_->staged() - starting_response_length < chunk_size_) {
+bool StatsRequest::renderNextChunk() {
+  while (response_.length() + render_->staged() < chunk_size_) {
     while (stat_map_.empty()) {
       if (params_.type_ != StatsType::All) {
         if (phase_ == Phase::CountersAndGauges) {
           // In the case of filtering by type, we need to call this before checking for
           // no stats in the phase, and then after that this function returns without the normal
           // advancing to the next phase.
-          renderPerHostMetrics(response);
+          renderPerHostMetrics();
         }
 
         if (phase_stat_count_ == 0) {
-          render_->noStats(response, phase_string_);
+          render_->noStats(response_, phase_string_);
         }
 
-        render_->finalize(response);
+        render_->finalize(response_);
         return false;
       }
 
       if (phase_stat_count_ == 0) {
-        render_->noStats(response, phase_string_);
+        render_->noStats(response_, phase_string_);
       }
 
       phase_stat_count_ = 0;
@@ -108,14 +105,14 @@ bool StatsRequest::nextChunk(Buffer::Instance& response) {
         startPhase();
         break;
       case Phase::CountersAndGauges:
-        renderPerHostMetrics(response);
+        renderPerHostMetrics();
 
         phase_ = Phase::Histograms;
         phase_string_ = "Histograms";
         startPhase();
         break;
       case Phase::Histograms:
-        render_->finalize(response);
+        render_->finalize(response_);
         return false;
       }
     }
@@ -133,17 +130,17 @@ bool StatsRequest::nextChunk(Buffer::Instance& response) {
       populateStatsForCurrentPhase(absl::get<ScopeVec>(variant));
       break;
     case StatOrScopesIndex::TextReadout:
-      renderStat<Stats::TextReadoutSharedPtr>(iter->first, response, variant);
+      renderStat<Stats::TextReadoutSharedPtr>(iter->first, variant);
       stat_map_.erase(iter);
       ++phase_stat_count_;
       break;
     case StatOrScopesIndex::Counter:
-      renderStat<Stats::CounterSharedPtr>(iter->first, response, variant);
+      renderStat<Stats::CounterSharedPtr>(iter->first, variant);
       stat_map_.erase(iter);
       ++phase_stat_count_;
       break;
     case StatOrScopesIndex::Gauge:
-      renderStat<Stats::GaugeSharedPtr>(iter->first, response, variant);
+      renderStat<Stats::GaugeSharedPtr>(iter->first, variant);
       stat_map_.erase(iter);
       ++phase_stat_count_;
       break;
@@ -151,7 +148,7 @@ bool StatsRequest::nextChunk(Buffer::Instance& response) {
       auto histogram = absl::get<Stats::HistogramSharedPtr>(variant);
       auto parent_histogram = dynamic_cast<Stats::ParentHistogram*>(histogram.get());
       if (parent_histogram != nullptr) {
-        render_->generate(response, iter->first, *parent_histogram);
+        render_->generate(response_, iter->first, *parent_histogram);
         ++phase_stat_count_;
       }
       stat_map_.erase(iter);
@@ -220,7 +217,7 @@ template <class StatType> void StatsRequest::populateStatsFromScopes(const Scope
   }
 }
 
-void StatsRequest::renderPerHostMetrics(Buffer::Instance& response) {
+void StatsRequest::renderPerHostMetrics() {
   // This code does not adhere to the streaming contract, but there isn't a good way to stream
   // these. There isn't a shared pointer to hold, so there's no way to safely pause iteration here
   // without copying all of the data somewhere. But copying all of the data would be more expensive
@@ -231,23 +228,22 @@ void StatsRequest::renderPerHostMetrics(Buffer::Instance& response) {
         if ((params_.type_ == StatsType::All || params_.type_ == StatsType::Counters) &&
             params_.shouldShowMetric(metric)) {
           ++phase_stat_count_;
-          render_->generate(response, metric.name(), metric.value());
+          render_->generate(response_, metric.name(), metric.value());
         }
       },
       [&](Stats::PrimitiveGaugeSnapshot&& metric) {
         if ((params_.type_ == StatsType::All || params_.type_ == StatsType::Gauges) &&
             params_.shouldShowMetric(metric)) {
           ++phase_stat_count_;
-          render_->generate(response, metric.name(), metric.value());
+          render_->generate(response_, metric.name(), metric.value());
         }
       });
 }
 
 template <class SharedStatType>
-void StatsRequest::renderStat(const std::string& name, Buffer::Instance& response,
-                              StatOrScopes& variant) {
+void StatsRequest::renderStat(const std::string& name, StatOrScopes& variant) {
   auto stat = absl::get<SharedStatType>(variant);
-  render_->generate(response, name, stat->value());
+  render_->generate(response_, name, stat->value());
 }
 
 } // namespace Server

@@ -103,7 +103,7 @@ void StatsTextRender::addDisjointBuckets(const std::string& name,
 StatsJsonRender::StatsJsonRender(Http::ResponseHeaderMap& response_headers,
                                  Buffer::Instance& response, const StatsParams& params)
     : histogram_buckets_mode_(params.histogram_buckets_mode_),
-      json_(std::make_unique<JsonContext>(response)), response_(response) {
+      json_(std::make_unique<JsonContext>(response)) {
   response_headers.setReferenceContentType(Http::Headers::get().ContentTypeValues.Json);
 }
 
@@ -116,31 +116,20 @@ StatsJsonRender::JsonContext::JsonContext(Buffer::Instance& response)
   stats_array_ = stats_map_->addArray();
 }
 
-void StatsJsonRender::drainIfNeeded(Buffer::Instance& response) {
-  if (&response_ != &response) {
-    if (json_ != nullptr) {
-      json_->streamer_.flush();
-    }
-    response.move(response_);
-  }
-}
-
 // Buffers a JSON fragment for a numeric stats, flushing to the response
 // buffer once we exceed JsonStatsFlushCount stats.
-void StatsJsonRender::generate(Buffer::Instance& response, const std::string& name,
+void StatsJsonRender::generate(Buffer::Instance&, const std::string& name,
                                uint64_t value) {
   ASSERT(!histograms_initialized_);
   json_->stats_array_->addMap()->addEntries({{"name", name}, {"value", value}});
-  drainIfNeeded(response);
 }
 
 // Buffers a JSON fragment for a text-readout stat, flushing to the response
 // buffer once we exceed JsonStatsFlushCount stats.
-void StatsJsonRender::generate(Buffer::Instance& response, const std::string& name,
+void StatsJsonRender::generate(Buffer::Instance&, const std::string& name,
                                const std::string& value) {
   ASSERT(!histograms_initialized_);
   json_->stats_array_->addMap()->addEntries({{"name", name}, {"value", value}});
-  drainIfNeeded(response);
 }
 
 // In JSON we buffer all histograms and don't write them immediately, so we
@@ -153,7 +142,7 @@ void StatsJsonRender::generate(Buffer::Instance& response, const std::string& na
 // We can further optimize this by streaming out the histograms object, one
 // histogram at a time, in case buffering all the histograms in Envoy
 // buffers up too much memory.
-void StatsJsonRender::generate(Buffer::Instance& response, const std::string& name,
+void StatsJsonRender::generate(Buffer::Instance&, const std::string& name,
                                const Stats::ParentHistogram& histogram) {
   if (!histograms_initialized_) {
     renderHistogramStart();
@@ -192,7 +181,6 @@ void StatsJsonRender::generate(Buffer::Instance& response, const std::string& na
     IS_ENVOY_BUG("unsupported histogram mode");
     break;
   }
-  drainIfNeeded(response);
 }
 
 void StatsJsonRender::populateSupportedPercentiles(StatsStreamer::Array& array) {
@@ -277,10 +265,7 @@ void StatsJsonRender::populateBucketsVerbose(
 
 // Since histograms are buffered (see above), the finalize() method generates
 // all of them.
-void StatsJsonRender::finalize(Buffer::Instance& response) {
-  json_.reset();
-  drainIfNeeded(response);
-}
+void StatsJsonRender::finalize(Buffer::Instance&) { json_.reset(); }
 
 uint64_t StatsJsonRender::staged() const {
   return json_ == nullptr ? 0 : json_->streamer_.staged();
