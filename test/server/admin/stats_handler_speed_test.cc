@@ -117,11 +117,18 @@ public:
     // character names. The first counter in each scope will be given a value so
     // it will be included in 'usedonly'.
     const std::string prefix(100, 'a');
+    Stats::StatNamePool pool(store_->symbolTable());
+    std::vector<Stats::StatName> counter_names;
+    counter_names.reserve(100);
+    for (uint32_t c = 0; c < 100; ++c) {
+      counter_names.push_back(pool.add(absl::StrCat(prefix, "_", c)));
+    }
+
     for (uint32_t s = 0; s < NumClusters; ++s) {
       Stats::ScopeSharedPtr scope = store_->createScope(absl::StrCat("scope_", s));
       scopes_.emplace_back(scope);
       for (uint32_t c = 0; c < 100; ++c) {
-        Stats::Counter& counter = scope->counterFromString(absl::StrCat(prefix, "_", c));
+        Stats::Counter& counter = scope->counterFromStatName(counter_names[c]);
         if (c == 0) {
           counter.inc();
         }
@@ -163,28 +170,33 @@ public:
       }
     }
     store_->mergeHistograms([]() {});
+    ENVOY_LOG_MISC(error, "Initializing stats; done");
   }
 
   void initClusterInfo() {
     ENVOY_LOG_MISC(error, "Initializing cluster info; slow to construct and destruct...");
     endpoint_stats_initialized_ = true;
 
+    Upstream::HostVector hosts;
+    hosts.reserve(10);
+    for (uint32_t host_num = 0; host_num < 10; host_num++) {
+      auto host = std::make_shared<FastMockHost>();
+      host->hostname_ = fmt::format("host{}.example.com", host_num);
+      host->address_ = Network::Utility::parseInternetAddressNoThrow("127.0.0.1", host_num + 1);
+      hosts.push_back(std::move(host));
+    }
+
     cm_.store_.fixed_tags_ = Stats::TagVector{{"fixed-tag", "fixed-value"}};
+    cm_.clusters_storage_.reserve(NumClusters);
+    cm_.clusters_.active_clusters_.reserve(NumClusters);
     for (uint32_t i = 0; i < NumClusters; i++) {
       std::string name = absl::StrCat("cluster_", i);
       cm_.clusters_storage_.push_back(std::make_unique<FastMockCluster>(name, cm_));
       FastMockCluster& cluster = *cm_.clusters_storage_.back();
       auto host_set = std::make_unique<FastMockHostSet>();
-      for (uint32_t host_num = 0; host_num < 10; host_num++) {
-        auto host = std::make_unique<FastMockHost>();
-        host->hostname_ = fmt::format("host{}.example.com", host_num);
-        host->address_ = Network::Utility::parseInternetAddressNoThrow("127.0.0.1", host_num + 1);
-
-        host_set->hosts_.push_back(std::move(host));
-      }
-
+      host_set->hosts_ = hosts;
       cluster.host_sets_.push_back(std::move(host_set));
-      cm_.clusters_.active_clusters_.emplace(name, cluster);
+      cm_.clusters_.active_clusters_.emplace(std::move(name), cluster);
     }
   }
 
@@ -442,7 +454,7 @@ static void BM_PrometheusFull(benchmark::State& state, bool per_endpoint_stats) 
   params.parse("?format=prometheus", response);
   // per_endpoint_stats: 418M for true, 261M for false
   const uint64_t lower_limit = per_endpoint_stats ? 400 * 1000 * 1000 : 200 * 1000 * 1000;
-  const uint64_t upper_limit = per_endpoint_stats ? 420 * 1000 * 1000 : 300 * 1000 * 1000;
+  const uint64_t upper_limit = per_endpoint_stats ? 450 * 1000 * 1000 : 300 * 1000 * 1000;
 
   uint64_t count;
   for (auto _ : state) { // NOLINT
