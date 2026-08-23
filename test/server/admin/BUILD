@@ -185,6 +185,28 @@ envoy_cc_benchmark_binary(
 )
 
 envoy_cc_benchmark_binary(
+    name = "clusters_handler_speed_test",
+    srcs = envoy_select_admin_functionality(["clusters_handler_speed_test.cc"]),
+    rbe_pool = "6gig",
+    deps = [
+        "//source/common/buffer:buffer_lib",
+        "//source/common/event:libevent_lib",
+        "//source/common/http:header_map_lib",
+        "//source/common/network:utility_lib",
+        "//source/common/upstream:upstream_lib",
+        "//source/server/admin:admin_lib",
+        "//test/mocks/server:admin_stream_mocks",
+        "//test/mocks/server:instance_mocks",
+        "//test/mocks/upstream:cluster_info_mocks",
+        "//test/mocks/upstream:cluster_manager_mocks",
+        "//test/mocks/upstream:cluster_priority_set_mocks",
+        "//test/mocks/upstream:host_mocks",
+        "@envoy_api//envoy/config/core/v3:pkg_cc_proto",
+        "@envoy_api//envoy/config/endpoint/v3:pkg_cc_proto",
+    ],
+)
+
+envoy_cc_benchmark_binary(
     name = "config_dump_handler_speed_test",
     srcs = envoy_select_admin_functionality(["config_dump_handler_speed_test.cc"]),
     rbe_pool = "6gig",
