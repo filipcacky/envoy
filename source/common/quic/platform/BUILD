@@ -124,6 +124,11 @@ envoy_quiche_platform_impl_cc_library(
     ],
 )
 
+# Empty stub, remove once bazel-registry drops quiche_mem_slice_impl_lib
+envoy_quiche_platform_impl_cc_library(
+    name = "quiche_mem_slice_impl_lib",
+)
+
 envoy_quiche_platform_impl_cc_library(
     name = "quiche_lower_case_string_impl_lib",
     hdrs = ["quiche_lower_case_string_impl.h"],
