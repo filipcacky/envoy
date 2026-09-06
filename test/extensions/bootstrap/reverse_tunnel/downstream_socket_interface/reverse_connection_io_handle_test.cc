@@ -3567,7 +3567,8 @@ TEST_F(ReverseConnectionIOHandleTest, ResetFileEventsStopsReplacementDialOnListe
   EXPECT_EQ(getHostConnectionInfo(host).connection_keys.count(connection_key), 0);
 }
 
-// Listener stop must shut down in-flight handshake wrappers on the worker.
+// Listener stop must shut down in-flight handshake wrappers on the worker. close() is expected
+// once, from RCConnectionWrapper::shutdown() (not a second time from resetFileEvents()).
 TEST_F(ReverseConnectionIOHandleTest, ResetFileEventsShutsDownHandshakeWrappers) {
   setupThreadLocalSlot();
 
@@ -3595,12 +3596,13 @@ TEST_F(ReverseConnectionIOHandleTest, ResetFileEventsShutsDownHandshakeWrappers)
   pushConnectionWrapper(std::move(wrapper));
   ASSERT_EQ(getConnectionWrappers().size(), 1);
 
+  const size_t deferred_before = dispatcher_.to_delete_.size();
   io_handle_->resetFileEvents();
 
   EXPECT_TRUE(getConnectionWrappers().empty());
   EXPECT_TRUE(getConnWrapperToHostMap().empty());
-
-  dispatcher_.clearDeferredDeleteList();
+  // shutdown() deferred-deletes the connection; resetFileEvents() deferred-deletes the wrapper.
+  EXPECT_EQ(dispatcher_.to_delete_.size(), deferred_before + 2);
 }
 
 } // namespace ReverseConnection
