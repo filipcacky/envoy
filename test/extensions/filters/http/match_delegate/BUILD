@@ -25,6 +25,7 @@ envoy_cc_test(
     rbe_pool = "linux_x64_small",
     deps = [
         "//source/extensions/filters/http/common:factory_base_lib",
+        "//source/extensions/filters/http/header_mutation:config",
         "//source/extensions/filters/http/match_delegate:config",
         "//source/server/config_validation:server_lib",
         "//test/integration:http_integration_lib",

@@ -132,11 +132,15 @@ envoy_extension_cc_test(
     srcs = [
         "cache_filter_integration_test.cc",
     ],
-    extension_names = ["envoy.filters.http.cache"],
+    extension_names = [
+        "envoy.filters.http.cache",
+        "envoy.filters.http.header_mutation",
+    ],
     rbe_pool = "linux_x64_small",
     deps = [
         "//source/extensions/filters/http/cache:config",
         "//source/extensions/filters/http/cache:http_cache_lib",
+        "//source/extensions/filters/http/header_mutation:config",
         "//source/extensions/http/cache/simple_http_cache:config",
         "//test/integration:http_protocol_integration_lib",
         "//test/test_common:simulated_time_system_lib",

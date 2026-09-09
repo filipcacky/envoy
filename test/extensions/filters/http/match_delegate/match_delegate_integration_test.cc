@@ -64,6 +64,58 @@ public:
                   typed_config:
                     "@type": type.googleapis.com/envoy.extensions.filters.common.matcher.action.v3.SkipFilter
     )EOF";
+
+  static constexpr absl::string_view kFrontRan = "x-front-ran";
+  static constexpr absl::string_view kBehindRan = "x-behind-ran";
+
+  std::string mutationFilterConfig(absl::string_view header) {
+    return fmt::format(R"EOF(
+      name: delegate_{}
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.common.matching.v3.ExtensionWithMatcher
+        extension_config:
+          name: envoy.filters.http.header_mutation
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+            mutations:
+              response_mutations:
+              - append:
+                  header:
+                    key: {}
+                    value: "yes"
+        xds_matcher:
+          matcher_tree:
+            input:
+              name: request-headers
+              typed_config:
+                "@type": type.googleapis.com/envoy.type.matcher.v3.HttpRequestHeaderMatchInput
+                header_name: match-header
+            exact_match_map:
+              map:
+                match:
+                  action:
+                    name: skip
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.common.matcher.action.v3.SkipFilter
+    )EOF",
+                       header, header);
+  }
+
+  void initializeChainAroundResponder() {
+    const std::string responder_config = R"EOF(
+      name: responder
+      typed_config:
+        "@type": type.googleapis.com/test.integration.filters.SetResponseCodeFilterConfig
+        code: 403
+    )EOF";
+
+    config_helper_.prependFilter(mutationFilterConfig(kBehindRan));
+    config_helper_.prependFilter(responder_config);
+    config_helper_.prependFilter(mutationFilterConfig(kFrontRan));
+
+    HttpIntegrationTest::initialize();
+    codec_client_ = makeHttpConnection(lookupPort("http"));
+  }
 };
 
 INSTANTIATE_TEST_SUITE_P(IpVersions, MatchDelegateIntegrationTest,
@@ -183,6 +235,30 @@ TEST_P(MatchDelegateIntegrationTest, PerRouteConfigResponseTrailers) {
   ASSERT_TRUE(response->waitForEndStream());
   // The filter should apply since we're not sending matching response trailers from upstream.
   EXPECT_EQ("403", response->headers().getStatusValue());
+}
+
+TEST_P(MatchDelegateIntegrationTest, FiltersBehindTheResponderDoNotEncode) {
+  initializeChainAroundResponder();
+
+  Envoy::Http::TestRequestHeaderMapImpl request_headers = default_request_headers_;
+  request_headers.setCopy(Envoy::Http::LowerCaseString("match-header"), "match");
+
+  auto response = codec_client_->makeHeaderOnlyRequest(request_headers);
+  ASSERT_TRUE(response->waitForEndStream());
+  EXPECT_EQ("403", response->headers().getStatusValue());
+
+  EXPECT_THAT(response->headers(), testing::Not(ContainsHeader(kFrontRan, testing::_)));
+  EXPECT_THAT(response->headers(), testing::Not(ContainsHeader(kBehindRan, testing::_)));
+}
+
+TEST_P(MatchDelegateIntegrationTest, FilterInFrontOfResponderRunsWhenSkipIsNotRequested) {
+  initializeChainAroundResponder();
+
+  auto response = codec_client_->makeHeaderOnlyRequest(default_request_headers_);
+  ASSERT_TRUE(response->waitForEndStream());
+  EXPECT_EQ("403", response->headers().getStatusValue());
+
+  EXPECT_THAT(response->headers(), ContainsHeader(kFrontRan, "yes"));
 }
 
 } // namespace

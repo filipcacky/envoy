@@ -158,6 +158,52 @@ TEST_P(CacheIntegrationTest, MissInsertHit) {
   }
 }
 
+class CacheEncodeChainTest : public CacheIntegrationTest {};
+
+INSTANTIATE_TEST_SUITE_P(
+    Protocols, CacheEncodeChainTest,
+    testing::ValuesIn(HttpProtocolIntegrationTest::getHttp1OnlyProtocolTestParams()),
+    HttpProtocolIntegrationTest::protocolTestParamsToString);
+
+TEST_P(CacheEncodeChainTest, FiltersConfiguredAfterTheCacheFilterDoNotEncode) {
+  const std::string behind_config{R"EOF(
+    name: behind_cache
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+      mutations:
+        response_mutations:
+        - append:
+            header:
+              key: x-encoded-by
+              value: behind
+    )EOF"};
+
+  config_helper_.prependFilter(behind_config);
+  initializeFilter(default_config);
+
+  const Http::TestRequestHeaderMapImpl request_headers =
+      httpRequestHeader("GET", /*authority=*/"FiltersConfiguredAfterTheCacheFilterDoNotEncode");
+  const std::string response_body(42, 'a');
+  Http::TestResponseHeaderMapImpl response_headers = httpResponseHeadersForBody(response_body);
+
+  {
+    IntegrationStreamDecoderPtr response_decoder = sendHeaderOnlyRequestAwaitResponse(
+        request_headers,
+        simulateUpstreamResponse(response_headers, makeOptRef(response_body), empty_trailers_));
+    EXPECT_EQ(response_decoder->body(), response_body);
+    EXPECT_THAT(response_decoder->headers(),
+                testing::Not(ContainsHeader("x-encoded-by", testing::_)));
+  }
+
+  {
+    IntegrationStreamDecoderPtr response_decoder =
+        sendHeaderOnlyRequestAwaitResponse(request_headers, serveFromCache());
+    EXPECT_EQ(response_decoder->body(), response_body);
+    EXPECT_THAT(response_decoder->headers(),
+                testing::Not(ContainsHeader("x-encoded-by", testing::_)));
+  }
+}
+
 TEST_P(CacheIntegrationTest, ExpiredValidated) {
   initializeFilter(default_config);
 
