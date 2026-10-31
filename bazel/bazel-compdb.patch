@@ -1,0 +1,33 @@
+diff --git a/aspects.bzl b/aspects.bzl
+--- a/aspects.bzl
++++ b/aspects.bzl
+@@ -30,6 +30,8 @@
+     "OBJCPP_COMPILE_ACTION_NAME",
+     "OBJC_COMPILE_ACTION_NAME",
+ )
++load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
++load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
+
+ CompilationAspect = provider()
+
+@@ -361,7 +363,10 @@
+         "_cc_toolchain": attr.label(
+             default = Label("@bazel_tools//tools/cpp:current_cc_toolchain"),
+         ),
+-        "_xcode_config": attr.label(default = Label("@bazel_tools//tools/osx:current_xcode_config")),
++        "_xcode_config": attr.label(default = configuration_field(
++            fragment = "apple",
++            name = "xcode_config_label",
++        )),
+     },
+     fragments = ["cpp", "objc", "apple"],
+     provides = [CompilationAspect],
+diff --git a/MODULE.bazel b/MODULE.bazel
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -3,3 +3,5 @@
+     version = "0.0.0-20220906-4086479.envoy",
+     compatibility_level = 0,
+ )
++
++bazel_dep(name = "rules_cc", version = "0.2.27")
